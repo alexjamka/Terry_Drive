@@ -1,0 +1,313 @@
+<?xml version="1.0"?>
+<robot xmlns:xacro="http://www.ros.org/wiki/xacro" name="Buddy">
+
+  <xacro:property name="base_radius" value="0.1651"/>
+  <xacro:property name="base_length" value="0.1524"/>
+  <xacro:property name="wheel_radius" value="0.0381"/>
+
+  <material name="Buddy_Base_Blue">
+    <color rgba="0 0 1 1"/>
+  </material>
+
+  <material name="Buddy_Neck_Orange">
+    <color rgba="1 0.4 0.2 1"/>
+  </material>
+
+  <material name="Buddy_Wheel_Black">
+    <color rgba="0.1 0.1 0.1 1"/>
+  </material>
+
+  <link name="BuddyBase_link">
+    <visual>
+      <geometry>
+        <cylinder length="${base_length}" radius="${base_radius}"/>
+      </geometry>
+      <material name="Buddy_Base_Blue"/>
+      <origin xyz="0 0 0.02" rpy="0 0 0"/> 
+    </visual>
+    <collision>
+      <geometry>
+        <cylinder length="${base_length}" radius="${base_radius}"/>
+      </geometry>
+      <origin xyz="0 0 0.02" rpy="0 0 0"/>
+    </collision>
+    <inertial>
+      <mass value="5.0"/>
+      <inertia ixx="0.0437" ixy="0.0" ixz="0.0" iyy="0.0437" iyz="0.0" izz="0.0681"/>    
+    </inertial>
+  </link>
+
+  <link name="BuddyBaseFootprint_link"/>
+
+  <joint name="BuddyBaseFootprint_joint" type="fixed">
+    <parent link="BuddyBaseFootprint_link"/>
+    <child link="BuddyBase_link"/>
+    <origin xyz="0 0 0.12" rpy="0 0 0"/>
+  </joint>
+
+  <link name="BuddyNeck_link">
+    <visual> 
+      <geometry> 
+        <box size="0.02 0.04 0.8428"/>
+      </geometry>
+      <material name="Buddy_Neck_Orange"/>
+      <origin rpy="0 0 0" xyz="-0.1600 0 0.1724"/> 
+    </visual>
+    <collision>
+      <geometry>
+        <box size="0.02 0.04 0.8128"/>
+      </geometry>
+      <origin rpy="0 0 0" xyz="-0.1600 0 0.1724"/>
+    </collision>
+    <inertial>
+      <mass value ="0.001"/>
+      <inertia ixx="0.00001" ixy="0" ixz="0" iyy="0.00001" iyz="0" izz="0.000050"/>
+    </inertial>
+  </link>   
+
+  <joint name="neck_to_base" type="fixed">
+    <parent link="BuddyBase_link"/>
+    <child link="BuddyNeck_link"/>
+    <origin xyz="0 0 0.15" rpy="0 0 0"/>
+  </joint>
+
+  <link name="BuddyCameraMount_link">
+    <visual>
+      <geometry>
+        <box size="0.1 0.1 0.1"/>
+      </geometry>
+      <origin xyz="0 0 0"/>
+      <material name="Buddy_Wheel_Black"/>
+    </visual>
+    <collision>
+      <geometry>
+        <box size="0.1 0.1 0.1"/>
+      </geometry>
+    </collision>
+    <inertial>
+      <mass value="0.01"/>
+      <inertia ixx="1e-4" ixy="0" ixz="0" iyy="1e-4" iyz="0" izz="1e-4"/>
+    </inertial>
+  </link>
+
+  <joint name="CameraMount_to_neck" type="fixed">
+    <parent link="BuddyNeck_link"/>
+    <child link="BuddyCameraMount_link"/>
+    <origin xyz="-0.1600 0 0.6128"/>
+  </joint>
+
+  <link name="LidarMount_link">
+    <visual>
+      <geometry>
+        <cylinder length="0.1" radius="0.1"/>
+      </geometry>
+      <origin xyz="0 0 0"/>
+      <material name="Buddy_Wheel_Black"/>
+    </visual>
+    <collision>
+      <geometry>
+        <cylinder length="0.1" radius="0.1"/>
+      </geometry>
+    </collision>
+    <inertial>
+      <mass value="0.05"/>
+      <inertia ixx="1e-4" ixy="0" ixz="0" iyy="1e-4" iyz="0" izz="1e-4"/>
+    </inertial>
+  </link>
+
+  <joint name="LidarMount_to_base" type="fixed">
+    <parent link="BuddyBase_link"/>
+    <child link="LidarMount_link"/>
+    <origin xyz=".05 0 0.124"/>
+  </joint>
+
+  <link name="BuddyWheelRight_link">
+    <visual>
+      <geometry>
+        <cylinder length="0.0127" radius="${wheel_radius}"/>
+      </geometry>
+      <material name="Buddy_Wheel_Black"/>
+    </visual>
+    <collision>
+      <geometry>
+        <cylinder length="0.0127" radius ="${wheel_radius}"/>
+      </geometry>
+    </collision>
+    <inertial>
+      <mass value='0.100'/>
+      <inertia ixx="0.00003763" ixy="0" ixz="0" iyy="0.00003763" iyz="0" izz="0.00007258"/>
+    </inertial>
+  </link>
+
+  <link name="BuddyWheelLeft_link">
+    <visual>
+      <geometry>
+        <cylinder length="0.0127" radius="${wheel_radius}"/>
+      </geometry>
+      <material name="Buddy_Wheel_Black"/>
+    </visual>
+    <collision>
+      <geometry>
+        <cylinder length="0.0127" radius ="${wheel_radius}"/>
+      </geometry>
+    </collision>
+    <inertial>
+      <mass value='0.100'/>
+      <inertia ixx="0.00003763" ixy="0" ixz="0" iyy="0.00003763" iyz="0" izz="0.00007258"/>
+    </inertial>
+  </link> 
+
+  <joint name="wheel_to_base_right" type="continuous">
+    <parent link="BuddyBase_link"/>
+    <child link="BuddyWheelRight_link"/>
+    <axis xyz="0 0 -1"/>
+    <origin xyz="0 -0.1651 -0.1" rpy="1.5708 0 0"/>
+  </joint>
+
+  <joint name="wheel_to_base_left" type="continuous">
+    <parent link="BuddyBase_link"/>
+    <child link="BuddyWheelLeft_link"/>
+    <axis xyz="0 0 -1"/>
+    <origin xyz="0 0.1651 -0.1" rpy="1.5708 0 0"/>
+  </joint>
+
+  <link name="caster_link">
+    <visual>
+      <geometry><sphere radius="0.02"/></geometry>
+      <material name="Buddy_Wheel_Black"/>
+    </visual>
+    <collision>
+      <geometry><sphere radius="0.02"/></geometry>
+    </collision>
+    <inertial>
+      <mass value="0.05"/>
+      <inertia ixx="1e-5" ixy="0" ixz="0" iyy="1e-5" iyz="0" izz="1e-5"/>
+    </inertial>
+  </link>
+
+  <joint name="caster_to_base" type="fixed">
+    <parent link="BuddyBase_link"/>
+    <child link="caster_link"/>
+    <origin xyz="${base_radius - 0.02} 0 -0.115" rpy="0 0 0"/>
+  </joint>
+
+  <link name="caster_rear_link">
+    <visual>
+      <geometry><sphere radius="0.02"/></geometry>
+      <material name="Buddy_Wheel_Black"/>
+    </visual>
+    <collision>
+      <geometry><sphere radius="0.02"/></geometry>
+    </collision>
+    <inertial>
+      <mass value="0.05"/>
+      <inertia ixx="1e-5" ixy="0" ixz="0" iyy="1e-5" iyz="0" izz="1e-5"/>
+    </inertial>
+  </link>
+
+  <joint name="caster_rear_to_base" type="fixed">
+    <parent link="BuddyBase_link"/>
+    <child link="caster_rear_link"/>
+    <origin xyz="-${base_radius - 0.02} 0 -0.115" rpy="0 0 0"/>
+  </joint>
+
+  <gazebo reference="BuddyWheelRight_link">
+    <mu1>1.0</mu1>
+    <mu2>1.0</mu2>
+    <visual><material><ambient>0.1 0.1 0.1 1</ambient><diffuse>0.1 0.1 0.1 1</diffuse></material></visual>
+  </gazebo>
+
+  <gazebo reference="BuddyWheelLeft_link">
+    <mu1>1.0</mu1>
+    <mu2>1.0</mu2>
+    <visual><material><ambient>0.1 0.1 0.1 1</ambient><diffuse>0.1 0.1 0.1 1</diffuse></material></visual>
+  </gazebo>
+
+  <gazebo reference="BuddyBase_link">
+    <visual><material><ambient>0 0 1 1</ambient><diffuse>0 0 1 1</diffuse></material></visual>
+  </gazebo>
+
+  <gazebo reference="BuddyNeck_link">
+    <visual><material><ambient>1 0.4 0.2 1</ambient><diffuse>1 0.4 0.2 1</diffuse></material></visual>
+  </gazebo>
+
+  <gazebo reference="caster_link">
+    <mu1>0</mu1><mu2>0</mu2>
+    <visual><material><ambient>0.1 0.1 0.1 1</ambient><diffuse>0.1 0.1 0.1 1</diffuse></material></visual>
+  </gazebo>
+
+  <gazebo reference="caster_rear_link">
+    <mu1>0</mu1><mu2>0</mu2>
+    <visual><material><ambient>0.1 0.1 0.1 1</ambient><diffuse>0.1 0.1 0.1 1</diffuse></material></visual>
+  </gazebo>
+
+  <gazebo>
+    
+
+    <plugin filename="gz-sim-joint-state-publisher-system" name="gz::sim::systems::JointStatePublisher">
+      <topic>/joint_states</topic>
+    </plugin>
+
+    <plugin filename="gz-sim-diff-drive-system" name="gz::sim::systems::DiffDrive">
+      <left_joint>wheel_to_base_left</left_joint>
+      <right_joint>wheel_to_base_right</right_joint>
+      <wheel_separation>${base_radius * 2}</wheel_separation>
+      <wheel_radius>${wheel_radius}</wheel_radius>
+      <topic>/cmd_vel</topic>
+      <odom_topic>/odom</odom_topic>
+      <tf_topic>/tf</tf_topic>
+      <frame_id>odom</frame_id>
+      <child_frame_id>BuddyBaseFootprint_link</child_frame_id>
+    </plugin>
+  </gazebo>
+
+  <gazebo reference="LidarMount_link">
+    <sensor name="A1_Lidar_Sensor" type="gpu_lidar">
+      <pose>0 0 0 0 0 0</pose>
+      <update_rate>10</update_rate>
+      <topic>/scan</topic>
+      <visualize>true</visualize>
+      <ray>
+        <scan>
+          <horizontal>
+            <samples>720</samples>
+            <resolution>1</resolution>
+            <min_angle>-3.14159</min_angle>
+            <max_angle>3.14159</max_angle>
+          </horizontal>
+        </scan>
+        <range>
+          <min>0.15</min>
+          <max>12</max>
+          <resolution>0.01</resolution>
+        </range>
+      </ray>
+      <always_on>true</always_on>
+    </sensor>
+    <visual><material><ambient>0.1 0.1 0.1 1</ambient><diffuse>0.1 0.1 0.1 1</diffuse></material></visual>
+  </gazebo>
+
+  <gazebo reference="BuddyCameraMount_link">
+    <sensor name="oak_d_lite" type="rgbd_camera">
+      <pose>0 0 0 0 0 0</pose>
+      <update_rate>30</update_rate>
+      <topic>/camera</topic>
+      <camera>
+        <horizontal_fov>1.2217</horizontal_fov>
+        <image>
+          <width>640</width>
+          <height>480</height>
+          <format>RGB_INT8</format>
+        </image>
+        <clip>
+          <near>0.1</near>
+          <far>10.0</far>
+        </clip>
+      </camera>
+      <always_on>true</always_on>
+      <visualize>false</visualize>
+    </sensor>
+    <visual><material><ambient>0.1 0.1 0.1 1</ambient><diffuse>0.1 0.1 0.1 1</diffuse></material></visual>
+  </gazebo>
+
+</robot>
