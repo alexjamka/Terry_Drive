@@ -1,0 +1,16 @@
+# ROS2 / colcon
+build/
+install/
+log/
+
+# PlatformIO
+.pio/
+
+# Python
+__pycache__/
+*.pyc
+
+# Models / large binaries (kept out of git)
+*.engine
+*.onnx
+*.pt

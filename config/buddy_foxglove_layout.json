@@ -1,0 +1,152 @@
+{
+  "configById": {
+    "3D!main": {
+      "layers": {
+        "grid": {
+          "layerId": "foxglove.Grid",
+          "visible": true,
+          "frameLocked": true,
+          "label": "Grid",
+          "instanceId": "grid",
+          "color": "#248eff",
+          "position": [0, 0, 0],
+          "rotation": [0, 0, 0],
+          "size": 10,
+          "divisions": 10,
+          "lineWidth": 1,
+          "order": 1
+        }
+      },
+      "cameraState": {
+        "perspective": true,
+        "distance": 10,
+        "phi": 60,
+        "thetaOffset": 45,
+        "targetOffset": [0, 0, 0],
+        "target": [0, 0, 0],
+        "targetOrientation": [0, 0, 0, 1],
+        "fovy": 45,
+        "near": 0.5,
+        "far": 5000
+      },
+      "followMode": "follow-pose",
+      "followTf": "base_link",
+      "scene": {},
+      "transforms": {},
+      "topics": {
+        "/scan": {
+          "visible": true,
+          "pointSize": 3,
+          "colorMode": "flat",
+          "flatColor": "#ff0000"
+        },
+        "/map": {
+          "visible": true,
+          "colorMode": "map",
+          "alpha": 0.7
+        },
+        "/tracked_target": {
+          "visible": true,
+          "type": "arrow",
+          "color": "#00ff7f"
+        },
+        "/person_detections": {
+          "visible": true
+        },
+        "/tf": {
+          "visible": true
+        },
+        "/robot_description": {
+          "visible": true
+        },
+        "/global_costmap/costmap": {
+          "visible": false
+        },
+        "/local_costmap/costmap": {
+          "visible": false
+        }
+      },
+      "publish": {
+        "type": "pose_estimate",
+        "poseTopic": "/initialpose",
+        "poseEstimateTopic": "/initialpose",
+        "goalTopic": "/goal_pose",
+        "poseEstimateXDeviation": 0.5,
+        "poseEstimateYDeviation": 0.5,
+        "poseEstimateThetaDeviation": 0.26
+      }
+    },
+    "Image!target_cam": {
+      "cameraState": {
+        "distance": 20
+      },
+      "followMode": "follow-pose",
+      "followTf": null,
+      "scene": {},
+      "transforms": {},
+      "topics": {},
+      "layers": {},
+      "publish": {
+        "type": "point",
+        "poseTopic": "/move_base_simple/goal",
+        "poseEstimateTopic": "/initialpose",
+        "poseEstimateXDeviation": 0.5,
+        "poseEstimateYDeviation": 0.5,
+        "poseEstimateThetaDeviation": 0.26
+      },
+      "imageMode": {
+        "imageTopic": "/oak/image_target",
+        "calibrationTopic": "",
+        "synchronize": false,
+        "rotation": 0,
+        "minValue": 0,
+        "maxValue": 1,
+        "flipHorizontal": false,
+        "flipVertical": false
+      }
+    },
+    "RawMessages!target_info": {
+      "diffEnabled": false,
+      "diffMethod": "custom",
+      "diffTopicPath": "",
+      "showFullMessageForDiff": false,
+      "topicPath": "/tracked_target_info.data"
+    },
+    "Log!nodes": {
+      "searchTerms": [],
+      "minLogLevel": 1,
+      "nameFilter": {
+        "buddy_target_tracker": {
+          "visible": true
+        },
+        "buddy_face_recognizer": {
+          "visible": true
+        },
+        "buddy_person_detector": {
+          "visible": true
+        }
+      }
+    }
+  },
+  "globalVariables": {},
+  "userNodes": {},
+  "playbackConfig": {
+    "speed": 1
+  },
+  "layout": {
+    "first": {
+      "first": "3D!main",
+      "second": "Image!target_cam",
+      "direction": "row",
+      "splitPercentage": 55
+    },
+    "second": {
+      "first": "RawMessages!target_info",
+      "second": "Log!nodes",
+      "direction": "row",
+      "splitPercentage": 40
+    },
+    "direction": "column",
+    "splitPercentage": 65
+  }
+}
