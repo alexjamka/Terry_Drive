@@ -79,7 +79,8 @@ def generate_launch_description():
         executable='static_transform_publisher',
         name='laser_tf',
         arguments=['--frame-id', 'LidarMount_link',
-                   '--child-frame-id', 'laser'],
+                   '--child-frame-id', 'laser',
+                   '--yaw', '3.14159'],
         output='screen',
     )
 
