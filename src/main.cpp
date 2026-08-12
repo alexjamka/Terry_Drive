@@ -14,6 +14,15 @@
 #define WHEEL_SEPARATION 0.3302
 #define MAX_PWM 250
 
+// Below MIN_PWM the geared motors stall and buzz instead of turning, so any
+// nonzero command smaller than this gets bumped up to it. Without this, Nav2's
+// final in-place rotation (~0.2 rad/s -> PWM 27) never actually moves the base
+// and goals time out just short of completion. Commands under MIN_VEL are
+// treated as a genuine stop. Tune MIN_PWM up until the wheels reliably break
+// away from rest on carpet.
+#define MIN_PWM 40
+#define MIN_VEL 0.005
+
 volatile long leftTicks = 0;
 volatile long rightTicks = 0;
 
@@ -30,11 +39,16 @@ void IRAM_ATTR rightISR() {
   rightTicks += digitalRead(ENC_RB) ? 1 : -1;
 }
 
+int velToPwm(float v) {
+  if (fabs(v) < MIN_VEL) return 0;
+  int p = (int)(v * 833.0);  // 250 / 0.3
+  if (abs(p) < MIN_PWM) p = (v > 0) ? MIN_PWM : -MIN_PWM;
+  return constrain(p, -MAX_PWM, MAX_PWM);
+}
+
 void drive(float left, float right) {
-  int lp = (int)(left * 833.0);  // 250 / 0.3
-  int rp = (int)(right * 833.0);
-  lp = constrain(lp, -MAX_PWM, MAX_PWM);
-  rp = constrain(rp, -MAX_PWM, MAX_PWM);
+  int lp = velToPwm(left);
+  int rp = velToPwm(right);
 
   if (lp > 0) { digitalWrite(IN1, HIGH); digitalWrite(IN2, LOW); }
   else if (lp < 0) { digitalWrite(IN1, LOW); digitalWrite(IN2, HIGH); }
