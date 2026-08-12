@@ -23,7 +23,10 @@ install(PROGRAMS
   scripts/buddy_face_db.py            # face embedding store (imported by above)
   scripts/buddy_enroll_face.py        # CLI: enroll a new person into face_db
   scripts/buddy_target_tracker.py     # picks + tracks the follow target
-  scripts/buddy_follow_controller.py  # target pose -> cmd_vel
+  scripts/buddy_follow_controller.py  # target pose -> cmd_vel_raw
+  scripts/buddy_scan_guard.py         # lidar safety: cmd_vel_raw -> cmd_vel
+  scripts/buddy_wanderer.py           # random exploration -> cmd_vel_raw
+  scripts/buddy_scan_utils.py         # shared scan helpers (imported)
   DESTINATION lib/${PROJECT_NAME}
 )
 
