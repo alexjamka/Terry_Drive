@@ -99,6 +99,31 @@ older capture kept for reference.
 > `home_20260418`. This is the main gap between what runs today and the
 > "navigate the home autonomously" goal.
 
+## TF tree
+
+Verified consistent — every consumer agrees on `BuddyBaseFootprint_link`.
+
+```
+map                     <- slam_toolbox
+ └── odom               <- slam_toolbox
+      └── BuddyBaseFootprint_link      <- buddy_serial_bridge (wheel odometry)
+           └── BuddyBase_link          <- robot_state_publisher, from here down
+                ├── BuddyNeck_link
+                │    └── BuddyCameraMount_link
+                │         └── oak_d_link        <- static, identity
+                ├── LidarMount_link
+                │    └── laser                  <- static, yaw 3.14159
+                ├── BuddyWheel{Left,Right}_link
+                └── caster_link, caster_rear_link
+```
+
+The URDF root is `BuddyBaseFootprint_link`, which is also what the serial bridge
+attaches `odom` to — so each frame has exactly one parent and the chain is valid.
+The two static publishers carry no translation *by design*: the URDF joints
+already place the mounts (`LidarMount_to_base` at `x=0.05, z=0.124`,
+`CameraMount_to_neck` at `x=-0.16, z=0.6128`), so the statics are just frame
+renames, plus the lidar's 180° mounting flip.
+
 ## DDS
 
 Two CycloneDDS profiles live in `~/buddy_ws/config/`. Neither is active — set
@@ -109,14 +134,38 @@ Two CycloneDDS profiles live in `~/buddy_ws/config/`. Neither is active — set
 - `cyclonedds_largemsg.xml` — bigger max message + fragment size. Use when
   streaming camera images to Foxglove on another machine.
 
+## Fixed 2026-08-12 — "goal does nothing" bugs
+
+Four independent faults, any one of which stops navigation:
+
+1. **`bt_navigator` had no `plugin_lib_names`.** The config used the
+   `navigators:` / `nav2_bt_navigator::…` form, which is **Iron/Jazzy syntax**.
+   Humble ignores it and needs the BT node libraries listed explicitly. The
+   result was a behavior tree with zero registered nodes, so every
+   `NavigateToPose` goal failed the instant it was accepted. **This was the
+   main cause.**
+2. **Neither costmap used the lidar.** Both listed a single observation source
+   `depth` on `/oak/stereo/image_raw` — a **depthai-ros** topic that nothing
+   publishes (the detector drives the OAK-D through the DepthAI Python API and
+   publishes `/camera/color/image_raw`). It was also declared `PointCloud2`
+   while the name says image, with `sensor_frame: oak_rgb_camera_optical_frame`,
+   a frame absent from the TF tree. Wrong topic, wrong type, wrong frame — so
+   `/scan` from the YDLidar was never consumed and the robot navigated blind.
+   Both costmaps now take `/scan` as a `LaserScan` in frame `laser`.
+3. **`odom_topic: /rtabmap/odom`** in `bt_navigator` and `velocity_smoother` —
+   left from an abandoned RTAB-Map experiment. Nothing publishes it; the serial
+   bridge publishes `/odom`.
+4. **Motor deadband.** `RotateToGoal.slowing_factor: 5.0` makes the final
+   in-place turn ~0.2 rad/s → PWM 27, below stiction, so the base stalled just
+   short of the goal. The firmware now floors nonzero commands at `MIN_PWM`.
+
 ## Known issues
 
-1. **Firmware fork is unresolved** — the active `main.cpp` has no PID; the
-   archived `.ino` does, and their `IN1`/`IN2` pin order disagrees. See the
-   `buddy_esp32` README. Fix before tuning Nav2.
-2. **SLAM runs instead of localization** — see Maps above.
-3. **Static TFs carry no translation** — the OAK-D and laser transforms in the
-   launch file pass only a yaw. Correct *only* if the URDF mount links already
-   place the sensors; worth verifying against the physical build.
-4. `worlds/apartment.sdf` and the `ros_gz_*` deps in `package.xml` are left from
-   a Gazebo phase with no sim launch file. Either add one or drop them.
+1. **SLAM runs instead of localization** — see Maps above.
+2. **Firmware fork is unresolved** — the active `main.cpp` is open-loop; the
+   archived `.ino` has PID. Deliberate choice for now: the base moves slowly
+   enough that deadband compensation matters more than closed-loop tracking.
+   Revisit if odometry drift shows up under load.
+3. `collision_monitor` is configured but never launched on Humble; `worlds/apartment.sdf`
+   and the `ros_gz_*` deps in `package.xml` are left from a Gazebo phase with no
+   sim launch file. Either wire them up or drop them.
