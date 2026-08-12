@@ -37,13 +37,37 @@ class BuddySerialBridge(Node):
         self.prev_right_ticks = None
         self.last_encoder_time = None
 
-        # Serial
+        # Serial.
+        #
+        # The ESP32 is connected over USB, not the Jetson's 40-pin UART. Both
+        # the ESP32 and the YDLidar are CP2102 bridges reporting serial "0001",
+        # so /dev/serial/by-id collides and ttyUSB* ordering is not stable
+        # across reboots - this by-path name is tied to the physical USB socket.
+        # Re-derive after moving cables with:  ls -l /dev/serial/by-path/
+        self.declare_parameter(
+            'port', '/dev/serial/by-path/platform-3610000.usb-usb-0:2.4:1.0-port0')
+        self.declare_parameter('baud', 115200)
+        # An encoder jump larger than this means the ESP32 reset and its tick
+        # counters restarted at zero; integrating that delta would teleport the
+        # odometry. ~36 ticks is a full-speed frame at 20 Hz.
+        self.declare_parameter('max_tick_jump', 500)
+
+        port = self.get_parameter('port').value
+        baud = self.get_parameter('baud').value
+        self.max_tick_jump = self.get_parameter('max_tick_jump').value
+
         try:
-            self.ser = serial.Serial('/dev/ttyTHS1', 115200, timeout=0.05)
-            self.get_logger().info('Connected to ESP32 on /dev/ttyTHS1')
+            # Opening a CP2102 toggles DTR/RTS, which resets the ESP32. That's
+            # fine - we re-baseline on the first encoder frame - but it means
+            # the base is briefly unresponsive right after this node starts.
+            self.ser = serial.Serial(port, baud, timeout=0.05)
+            self.get_logger().info(f'Connected to ESP32 on {port}')
         except Exception as e:
-            self.get_logger().error(f'Failed to open serial: {e}')
             self.ser = None
+            self.get_logger().error(
+                f'Failed to open {port}: {e}. The base will not move and no '
+                f'odometry will be published. Check `ls -l /dev/serial/by-path/` '
+                f'and set the `port` parameter.')
 
         # Publishers (UNCOMMENTED)
         self.odom_pub = self.create_publisher(Odometry, '/odom', 10)
@@ -114,6 +138,20 @@ class BuddySerialBridge(Node):
         now = self.get_clock().now()
 
         if self.prev_left_ticks is None:
+            self.prev_left_ticks = left_ticks
+            self.prev_right_ticks = right_ticks
+            self.last_encoder_time = now
+            return
+
+        # An implausible jump means the ESP32 reset and its counters restarted
+        # at zero. Re-baseline instead of integrating a bogus delta, which would
+        # otherwise teleport the robot in /odom and drag the map frame with it.
+        if (abs(left_ticks - self.prev_left_ticks) > self.max_tick_jump or
+                abs(right_ticks - self.prev_right_ticks) > self.max_tick_jump):
+            self.get_logger().warn(
+                f'Encoder jump (L {self.prev_left_ticks}->{left_ticks}, '
+                f'R {self.prev_right_ticks}->{right_ticks}); assuming ESP32 '
+                f'reset and re-baselining odometry.')
             self.prev_left_ticks = left_ticks
             self.prev_right_ticks = right_ticks
             self.last_encoder_time = now

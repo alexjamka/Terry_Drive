@@ -12,7 +12,7 @@ ROS 2 Humble. This package holds the URDF, launch files, and Buddy's own nodes.
 | ------------- | ----------------------------------------------------------- |
 | Compute       | Jetson Orin Nano                                            |
 | Base          | Differential drive, wheel separation **0.3302 m**, encoders |
-| Motor control | ESP32 over UART @ 115200 — see `firmware/buddy_esp32`       |
+| Motor control | ESP32 over **USB** @ 115200 — see `firmware/buddy_esp32`    |
 | Lidar         | YDLidar X4, **mounted rotated 180°**                        |
 | Camera        | Luxonis OAK-D (runs the detector NN on-device)              |
 
@@ -182,6 +182,27 @@ attaches `odom` to — so each frame has one parent and the chain is valid. The
 static publishers carry no translation *by design*: the URDF joints already
 place the mounts (`LidarMount_to_base` at x=0.05, z=0.124; `CameraMount_to_neck`
 at x=-0.16, z=0.6128), so they're frame renames plus the lidar's 180° flip.
+
+## Serial devices
+
+The ESP32 and the YDLidar are **both CP2102 bridges reporting serial number
+`0001`**, so `/dev/serial/by-id/` collides — only one symlink exists — and
+`ttyUSB*` ordering is not stable across reboots. Everything therefore addresses
+them by `by-path`, which is tied to the physical USB socket:
+
+| Device | by-path                                          | Configured in |
+| ------ | ------------------------------------------------ | ------------- |
+| ESP32  | `platform-3610000.usb-usb-0:2.4:1.0-port0`       | `buddy_serial_bridge.py` `port` param, `platformio.ini` |
+| Lidar  | `platform-3610000.usb-usb-0:2.2:1.0-port0`       | `config/ydlidar_x4.yaml` |
+
+**If you move a USB cable, re-derive these** with `ls -l /dev/serial/by-path/`
+and update both places. Getting it wrong means the lidar driver talks to the
+ESP32, or a firmware flash goes at the lidar.
+
+There is **no UART connection** to the Jetson's 40-pin header — communication is
+purely over USB. (`buddy_serial_bridge.py` previously hardcoded `/dev/ttyTHS1`,
+which nothing was connected to, so it silently published no odometry and dropped
+every `/cmd_vel`.)
 
 ## DDS
 

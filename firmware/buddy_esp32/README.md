@@ -5,7 +5,10 @@ closes the loop on wheel encoders.
 
 ## Serial protocol
 
-Shared by both firmware variants below. 115200 baud, newline-terminated ASCII.
+Shared by both firmware variants below. 115200 baud, newline-terminated ASCII,
+carried over **USB** — there is no UART link to the Jetson's 40-pin header.
+The firmware also mirrors everything onto `Serial2` (GPIO 16/17), which is
+currently unconnected and harmless.
 
 | Direction        | Message                          | Meaning                          |
 | ---------------- | -------------------------------- | -------------------------------- |
