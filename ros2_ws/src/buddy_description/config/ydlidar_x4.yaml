@@ -1,6 +1,11 @@
 ydlidar_ros2_driver_node:
   ros__parameters:
-    port: /dev/ttyUSB0
+    # NOT /dev/ttyUSB0 - that is the ESP32. Both the lidar and the ESP32 are
+    # CP2102 bridges reporting the same serial number ("0001"), so /dev/serial/
+    # by-id collides and ttyUSB* ordering is not stable across reboots. This
+    # by-path name is tied to the physical USB socket instead.
+    # Re-derive after moving cables with:  ls -l /dev/serial/by-path/
+    port: /dev/serial/by-path/platform-3610000.usb-usb-0:2.2:1.0-port0
     frame_id: laser
     ignore_array: ""
     baudrate: 128000
