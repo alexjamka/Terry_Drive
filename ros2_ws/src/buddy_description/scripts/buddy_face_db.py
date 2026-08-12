@@ -1,17 +1,23 @@
 """
 Face database utilities for Buddy.
 
-Stores 512-d ArcFace embeddings per person under ~/buddy_ws/face_db/<name>/*.npy
+Stores 512-d ArcFace embeddings per person under the face database directory,
+one subdirectory per person containing *.npy embeddings.
 Provides enrollment (save) and recognition (match) functions.
 """
 
 from pathlib import Path
 import json
+import os
 import time
 import numpy as np
 
 
-FACE_DB_PATH = Path.home() / "buddy_ws" / "face_db"
+# Defaults to the store that ships with the repo; override with BUDDY_FACE_DB.
+FACE_DB_PATH = Path(
+    os.environ.get("BUDDY_FACE_DB", str(Path.home() / "Terry_Drive" / "face_db"))
+)
+
 RECOGNITION_THRESHOLD = 0.50
 
 

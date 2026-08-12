@@ -34,10 +34,10 @@ def generate_launch_description():
                 get_package_share_directory('ydlidar_ros2_driver'),
                 'launch', 'ydlidar_launch.py')
         ),
+        # Our own copy, so bringup doesn't depend on where the third-party
+        # driver source happens to be checked out.
         launch_arguments={
-            'params_file': os.path.join(
-                os.path.expanduser('~'),
-                'buddy_ws/src/ydlidar_ros2_driver/params/X4.yaml')
+            'params_file': os.path.join(pkg, 'config', 'ydlidar_x4.yaml')
         }.items(),
     )
 

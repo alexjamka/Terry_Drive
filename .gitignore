@@ -14,3 +14,13 @@ __pycache__/
 *.engine
 *.onnx
 *.pt
+
+# Third-party ROS sources — clone into ros2_ws/src/ per buddy.repos
+/ros2_ws/src/ydlidar_ros2_driver/
+/ros2_ws/src/depthai-ros/
+/ros2_ws/src/rplidar_ros/
+
+# Enrolled face embeddings are biometric data and this repo is public.
+# Keep the directory shape, never the vectors. Back these up out-of-band.
+/face_db/*
+!/face_db/.gitkeep
