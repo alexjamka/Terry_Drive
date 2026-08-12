@@ -1,0 +1,10 @@
+# PlatformIO build artifacts + downloaded libs (regenerate with `pio run`)
+.pio/
+
+# Editor
+.vscode/
+.idea/
+
+# tf2 graph dumps
+frames_*.gv
+frames_*.pdf
