@@ -1,0 +1,17 @@
+repositories:
+  ydlidar_ros2_driver:
+    type: git
+    url: https://github.com/YDLIDAR/ydlidar_ros2_driver.git
+    version: humble
+  # Removed 2026-08-12 as unused; restore only if you move off the DepthAI
+  # Python API to the ROS driver. buddy_person_detector.py imports `depthai`
+  # directly and owns its own pipeline.
+  # depthai-ros:
+  #   type: git
+  #   url: https://github.com/luxonis/depthai-ros.git
+  #   version: humble
+  # Removed 2026-08-12; superseded by the YDLidar X4.
+  # rplidar_ros:
+  #   type: git
+  #   url: https://github.com/Slamtec/rplidar_ros.git
+  #   version: ros2
