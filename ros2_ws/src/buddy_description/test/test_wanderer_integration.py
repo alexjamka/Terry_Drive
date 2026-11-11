@@ -8,6 +8,7 @@ import time
 import rclpy
 from geometry_msgs.msg import Twist
 from rclpy.node import Node
+from rclpy.qos import qos_profile_sensor_data
 from sensor_msgs.msg import LaserScan
 from std_msgs.msg import String
 
@@ -34,7 +35,9 @@ def make_scan(front_m=None):
 class H(Node):
     def __init__(self):
         super().__init__('itest_wander')
-        self.scan_pub = self.create_publisher(LaserScan, '/scan', 10)
+        # Match a real lidar driver: sensor data is BEST_EFFORT.
+        self.scan_pub = self.create_publisher(
+            LaserScan, '/scan', qos_profile_sensor_data)
         self.cmd = []
         self.state = []
         self.t0 = time.time()

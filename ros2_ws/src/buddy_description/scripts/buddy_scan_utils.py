@@ -32,13 +32,20 @@ def wrap_angle(a):
     return (np.asarray(a) + math.pi) % (2.0 * math.pi) - math.pi
 
 
-def scan_to_robot_frame(scan, yaw_offset):
+def scan_to_robot_frame(scan, yaw_offset, min_valid_range=0.0):
     """
     Convert a LaserScan into (bearings, ranges) in the robot frame.
 
     Invalid readings (NaN, inf, out-of-spec) are dropped rather than clamped:
     an out-of-range return means "nothing seen", and clamping it to range_max
-    would invent a phantom obstacle at the edge of the sensor.
+    would invent a phantom obstacle at the edge of the sensor. The X4 reports a
+    hard 0 for "no return", which range_min filtering already removes.
+
+    min_valid_range additionally rejects returns closer than a given distance.
+    Buddy's lidar sees a few rays of the robot's own structure at ~0.12 m, and
+    a permanent self-return inside the stop distance pins the base in place
+    forever. Keep this comfortably below stop_distance so a real obstacle is
+    still caught on approach.
 
     Returns two float arrays of equal length, possibly empty.
     """
@@ -49,7 +56,7 @@ def scan_to_robot_frame(scan, yaw_offset):
     ranges = np.asarray(scan.ranges, dtype=np.float64)
     angles = scan.angle_min + np.arange(n, dtype=np.float64) * scan.angle_increment
 
-    good = np.isfinite(ranges) & (ranges > max(scan.range_min, 1e-3))
+    good = np.isfinite(ranges) & (ranges > max(scan.range_min, min_valid_range, 1e-3))
     if scan.range_max > 0:
         good &= ranges < scan.range_max
 
@@ -77,14 +84,15 @@ def min_range_in_sector(bearings, ranges, lo, hi):
 
 def sector_distances(scan, yaw_offset,
                      front_half=DEFAULT_FRONT_HALF_ANGLE,
-                     side_span=DEFAULT_SIDE_SPAN):
+                     side_span=DEFAULT_SIDE_SPAN,
+                     min_valid_range=0.0):
     """
     Summarise a scan as the nearest obstacle in each sector around the robot.
 
     Returns a dict with keys front, left, right, rear - all metres, +inf when
     that sector saw nothing.
     """
-    bearings, ranges = scan_to_robot_frame(scan, yaw_offset)
+    bearings, ranges = scan_to_robot_frame(scan, yaw_offset, min_valid_range)
     return {
         'front': min_range_in_sector(bearings, ranges, -front_half, front_half),
         'left': min_range_in_sector(bearings, ranges, front_half, front_half + side_span),

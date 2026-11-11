@@ -239,3 +239,50 @@ Profiles in `~/Terry_Drive/config/`. Neither is active — set `CYCLONEDDS_URI`.
 3. `collision_monitor` is configured but never launched on Humble;
    `worlds/apartment.sdf` and the `ros_gz_*` deps are left from a Gazebo phase
    with no sim launch file.
+
+## Hardware findings 2026-11-11 (first run against the real X4)
+
+Three bugs that only appear on real hardware:
+
+1. **`/scan` QoS mismatch.** Lidar drivers publish sensor data **BEST_EFFORT**;
+   the nodes subscribed with the default **RELIABLE** profile, which is
+   QoS-incompatible, so ROS silently delivered nothing and the guard reported
+   `no_scan` forever. Both nodes now use `qos_profile_sensor_data`, and the
+   integration tests publish `/scan` the same way so this regresses.
+
+2. **Lidar self-return pinned the base.** Three rays read a constant **0.117 m**
+   straight ahead — the robot's own structure. That sits inside
+   `stop_distance` (0.35 m), so `front` never cleared and the wanderer was
+   stuck in TURN→BACK permanently. New `min_valid_range` parameter (default
+   0.20 m) rejects it; `front` then reads 0.57 m. Safe because the guard stops
+   at 0.35 m, so a real obstacle is always caught well before 0.20 m.
+
+3. **The X4 reports `0.0` for "no return"**, not `inf`
+   (`invalid_range_is_inf: false`). 509 of 720 rays are zeros. Already handled
+   by the `range_min` filter, but worth knowing when reading raw scans.
+
+### Still open
+
+- **Scan rate is 3.66 Hz**, well under the X4's 5–12 Hz spec, despite
+  `frequency: 10.0`. Sampling is correct (~1381 pts/rev at 5 kHz), so the motor
+  is simply spinning slow — most likely USB power. Usable for slow wandering,
+  marginal for anything faster. The `Real point count 1381 > fixed point count
+  720` warnings come from `fixed_resolution: true` fighting the real count.
+- **Sparse coverage:** only ~211 of 720 rays return anything, with dead
+  angular bands. Check for occlusion by the robot's own frame.
+- **ESP32 not responding.** The CP2102 enumerates (it's USB-powered) but the
+  module answers neither the app protocol nor the ROM bootloader. Most likely
+  the module itself is unpowered — on these dev boards the bridge comes up off
+  USB VBUS independently of the ESP32's supply.
+
+### Debugging note: kill leftovers between runs
+
+`ros2 launch` children survive killing the launch, and **two readers on one tty
+corrupts the stream for both** — it shows up as `Check Sum` errors from the
+lidar and garbage from the ESP32. Also note `pkill -f 'a\|b'` matches nothing:
+`pkill -f` takes an ERE, so use `pkill -f 'a|b'`.
+
+```bash
+pkill -f 'ydlidar|buddy_|foxglove_bridge|robot_state_publisher|static_transform_publisher|ros2 launch'
+fuser /dev/ttyUSB0 /dev/ttyUSB1     # must come back empty
+```

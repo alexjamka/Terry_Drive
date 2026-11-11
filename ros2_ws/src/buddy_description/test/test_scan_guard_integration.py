@@ -8,6 +8,7 @@ import time
 import rclpy
 from geometry_msgs.msg import Twist
 from rclpy.node import Node
+from rclpy.qos import qos_profile_sensor_data
 from sensor_msgs.msg import LaserScan
 
 N = 360
@@ -35,7 +36,9 @@ def make_scan(front_m=None):
 class Harness(Node):
     def __init__(self):
         super().__init__('itest_harness')
-        self.scan_pub = self.create_publisher(LaserScan, '/scan', 10)
+        # Match a real lidar driver: sensor data is BEST_EFFORT.
+        self.scan_pub = self.create_publisher(
+            LaserScan, '/scan', qos_profile_sensor_data)
         self.raw_pub = self.create_publisher(Twist, '/cmd_vel_raw', 10)
         self.got = []
         self.create_subscription(Twist, '/cmd_vel', lambda m: self.got.append(m), 10)

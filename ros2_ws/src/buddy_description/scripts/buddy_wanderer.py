@@ -29,6 +29,7 @@ import random
 import rclpy
 from geometry_msgs.msg import Twist
 from rclpy.node import Node
+from rclpy.qos import qos_profile_sensor_data
 from sensor_msgs.msg import LaserScan
 from std_msgs.msg import Bool, String
 from tf2_ros import Buffer, TransformListener
@@ -63,6 +64,8 @@ class Wanderer(Node):
         self.declare_parameter('base_frame', 'BuddyBaseFootprint_link')
         self.declare_parameter('scan_frame', 'laser')
         self.declare_parameter('scan_yaw_offset', math.pi)
+        # Rejects the robot's own structure, which the X4 sees at ~0.12 m.
+        self.declare_parameter('min_valid_range', 0.20)
 
         g = lambda n: self.get_parameter(n).value
         self.cruise_speed = g('cruise_speed')
@@ -78,6 +81,7 @@ class Wanderer(Node):
         self.front_half = math.radians(g('front_half_angle_deg'))
         self.side_span = math.radians(g('side_span_deg'))
         self.enabled = g('start_enabled')
+        self.min_valid_range = g('min_valid_range')
 
         if self.clear_distance <= self.turn_distance:
             self.get_logger().warn(
@@ -94,7 +98,11 @@ class Wanderer(Node):
         self.last_curiosity = self.get_clock().now()
         self.curiosity_until = None
 
-        self.create_subscription(LaserScan, '/scan', self._on_scan, 10)
+        # Lidar drivers publish sensor data BEST_EFFORT. Subscribing with the
+        # default RELIABLE profile is QoS-incompatible, and ROS silently
+        # delivers nothing - the guard just reports no_scan forever.
+        self.create_subscription(
+            LaserScan, '/scan', self._on_scan, qos_profile_sensor_data)
         self.create_subscription(Bool, '/wander_enable', self._on_enable, 10)
         self.cmd_pub = self.create_publisher(Twist, '/cmd_vel_raw', 10)
         self.status_pub = self.create_publisher(String, '/wander_status', 10)
@@ -112,7 +120,8 @@ class Wanderer(Node):
 
     def _on_scan(self, msg: LaserScan):
         self.sectors = sector_distances(
-            msg, self.scan_yaw, self.front_half, self.side_span)
+            msg, self.scan_yaw, self.front_half, self.side_span,
+            self.min_valid_range)
 
     def _on_enable(self, msg: Bool):
         if msg.data != self.enabled:

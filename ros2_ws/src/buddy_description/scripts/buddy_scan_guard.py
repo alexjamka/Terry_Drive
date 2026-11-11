@@ -28,6 +28,7 @@ import math
 import rclpy
 from geometry_msgs.msg import Twist
 from rclpy.node import Node
+from rclpy.qos import qos_profile_sensor_data
 from sensor_msgs.msg import LaserScan
 from std_msgs.msg import String
 from tf2_ros import Buffer, TransformListener
@@ -54,6 +55,8 @@ class ScanGuard(Node):
         self.declare_parameter('scan_frame', 'laser')
         # Fallback only - the real value is read from TF at startup.
         self.declare_parameter('scan_yaw_offset', math.pi)
+        # Rejects the robot's own structure, which the X4 sees at ~0.12 m.
+        self.declare_parameter('min_valid_range', 0.20)
 
         g = lambda n: self.get_parameter(n).value
         self.stop_distance = g('stop_distance')
@@ -67,6 +70,7 @@ class ScanGuard(Node):
         self.scan_timeout = g('scan_timeout')
         self.base_frame = g('base_frame')
         self.scan_frame = g('scan_frame')
+        self.min_valid_range = g('min_valid_range')
 
         if self.slow_distance <= self.stop_distance:
             self.get_logger().warn(
@@ -82,7 +86,11 @@ class ScanGuard(Node):
         self._sectors = None
         self._last_scan_time = None
 
-        self.create_subscription(LaserScan, '/scan', self._on_scan, 10)
+        # Lidar drivers publish sensor data BEST_EFFORT. Subscribing with the
+        # default RELIABLE profile is QoS-incompatible, and ROS silently
+        # delivers nothing - the guard just reports no_scan forever.
+        self.create_subscription(
+            LaserScan, '/scan', self._on_scan, qos_profile_sensor_data)
         self.create_subscription(Twist, '/cmd_vel_raw', self._on_cmd, 10)
         self.cmd_pub = self.create_publisher(Twist, '/cmd_vel', 10)
         self.status_pub = self.create_publisher(String, '/scan_guard_status', 10)
@@ -107,7 +115,8 @@ class ScanGuard(Node):
 
     def _on_scan(self, msg: LaserScan):
         self._sectors = sector_distances(
-            msg, self.scan_yaw, self.front_half, self.side_span)
+            msg, self.scan_yaw, self.front_half, self.side_span,
+            self.min_valid_range)
         self._last_scan_time = self.get_clock().now()
 
     def _on_cmd(self, msg: Twist):
