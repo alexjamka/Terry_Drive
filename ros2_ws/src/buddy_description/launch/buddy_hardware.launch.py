@@ -78,12 +78,19 @@ def generate_launch_description():
         }.items(),
     )
 
-    # The X4 is mounted backwards; the yaw here is what buddy_scan_guard and
-    # buddy_wanderer read out of TF to interpret scans in the robot frame.
+    # Lidar mounting yaw. buddy_scan_guard and buddy_wanderer read this out of
+    # TF to interpret scans in the robot frame, so it has to be right or every
+    # avoidance decision is mirrored.
+    #
+    # Calibrated 2026-11-11 against a known landmark: the 40x40 mm extrusion
+    # behind the lidar shows up at 0.117 m, and it lands at laser-frame 180 deg.
+    # Since that extrusion is physically at the robot's REAR, laser 0 deg points
+    # forward and the offset is zero. This was previously 3.14159, which mapped
+    # the rear extrusion onto the FRONT sector and inverted obstacle avoidance.
     laser_tf = Node(
         package='tf2_ros', executable='static_transform_publisher', name='laser_tf',
         arguments=['--frame-id', 'LidarMount_link', '--child-frame-id', 'laser',
-                   '--yaw', '3.14159'],
+                   '--yaw', '0.0'],
         output='screen',
     )
 

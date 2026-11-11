@@ -13,7 +13,7 @@ ROS 2 Humble. This package holds the URDF, launch files, and Buddy's own nodes.
 | Compute       | Jetson Orin Nano                                            |
 | Base          | Differential drive, wheel separation **0.3302 m**, encoders |
 | Motor control | ESP32 over **USB** @ 115200 — see `firmware/buddy_esp32`    |
-| Lidar         | YDLidar X4, **mounted rotated 180°**                        |
+| Lidar         | YDLidar X4, laser-frame 0° faces forward (calibrated)       |
 | Camera        | Luxonis OAK-D (runs the detector NN on-device)              |
 
 ## Build
@@ -82,19 +82,39 @@ obstacles, and there's a single spot to tune. Guard rules:
 `/scan_guard_status` and `/wander_status` publish JSON with the live sector
 distances — the fastest way to see what the robot thinks it's looking at.
 
-### The lidar is mounted backwards
+### Lidar mounting yaw — calibrated, and it matters
 
-The X4 sits rotated 180°, so **scan angle 0 points out the back of the robot**.
-Reading `/scan` naively makes the robot steer away from open space and into
-walls. `buddy_scan_utils.resolve_scan_yaw()` reads the mounting out of TF rather
-than hardcoding it, so it stays correct if the lidar is ever remounted. On
-startup the guard logs what it found:
+Get this wrong and **every avoidance decision is mirrored**: the robot steers
+away from open space and into walls. `buddy_scan_utils.resolve_scan_yaw()` reads
+the mounting out of TF rather than hardcoding it, and logs what it found:
 
 ```
-[buddy_scan_guard]: Lidar mounting yaw from TF: 180.0 deg
+[buddy_scan_guard]: Lidar mounting yaw from TF: 0.0 deg
 ```
 
-If that says 0.0, the static transform isn't up and avoidance will be inverted.
+**On Buddy the correct offset is 0 deg** — laser-frame 0 deg points forward.
+Calibrated 2026-11-11 against a known landmark: the 40x40 mm extrusion behind
+the lidar reads 0.117 m and sits at laser-frame 180 deg, and that extrusion is
+physically at the robot's rear, so laser 0 deg = robot 0 deg.
+
+The launch file previously asserted `--yaw 3.14159`. Reading the yaw from TF did
+not save us: TF itself was wrong and the node faithfully applied it. The symptom
+was the rear extrusion being reported as a 0.12 m frontal blocker, pinning the
+base inside `stop_distance` forever. Measured before and after, same room:
+
+| Sector | yaw = pi (wrong) | yaw = 0 (correct) |
+| ------ | ---------------- | ----------------- |
+| front  | 0.57             | **1.21**          |
+| left   | 0.65             | 1.77              |
+| right  | 1.77             | 0.65              |
+| rear   | 2.82             | 0.57 (extrusion)  |
+
+With it corrected the wanderer sits in `DRIVE` with clear space ahead instead of
+cycling TURN/BACK against a phantom.
+
+If you remount the lidar, recalibrate the same way: put a known landmark at a
+known bearing, read `/scan`, solve for the offset. A unit test pins the old
+wrong value as a regression.
 
 ## Node graph
 

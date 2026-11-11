@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Verify the scan sector math, especially the 180-deg lidar mounting."""
+"""Verify the scan sector maths, especially the lidar mounting yaw."""
 import math
 import os
 import sys
@@ -28,7 +28,8 @@ def make_scan(obstacles, default=float('inf')):
     return s
 
 
-YAW = math.pi  # Buddy's X4 is mounted backwards
+# Calibrated on hardware: laser-frame 0 deg points forward on Buddy.
+YAW = 0.0
 fails = []
 
 
@@ -41,26 +42,32 @@ def check(name, got, want):
         fails.append(name)
 
 
-print("1. Obstacle physically in FRONT of the robot.")
-print("   With yaw=pi mounting, that is laser-frame angle 180 deg.")
-s = sector_distances(make_scan({180: 0.5}), YAW)
+print("1. Obstacle physically in FRONT of the robot = laser-frame 0 deg.")
+s = sector_distances(make_scan({0: 0.5}), YAW)
 check("front sees it", s['front'], 0.5)
 check("rear does not", s['rear'], None)
 
-print("\n2. Obstacle physically BEHIND the robot = laser-frame 0 deg.")
-s = sector_distances(make_scan({0: 0.4}), YAW)
+print("\n2. Obstacle physically BEHIND the robot = laser-frame 180 deg.")
+s = sector_distances(make_scan({180: 0.4}), YAW)
 check("rear sees it", s['rear'], 0.4)
 check("front does not", s['front'], None)
 
-print("\n3. Obstacle on the robot's LEFT (+90 deg robot) = laser-frame -90.")
-s = sector_distances(make_scan({-90: 0.6}), YAW)
+print("\n3. Obstacle on the robot's LEFT (+90 deg robot) = laser-frame +90.")
+s = sector_distances(make_scan({90: 0.6}), YAW)
 check("left sees it", s['left'], 0.6)
 check("right does not", s['right'], None)
 
-print("\n4. Regression: pretending yaw=0 puts a front obstacle in the REAR.")
-s = sector_distances(make_scan({180: 0.5}), 0.0)
-check("front blind (the bug)", s['front'], None)
-check("rear wrongly sees it", s['rear'], 0.5)
+print("\n4. Regression: the launch file used to claim yaw=pi. That mirrors")
+print("   everything - a real obstacle ahead becomes invisible, and the")
+print("   extrusion behind the lidar masquerades as a frontal blocker.")
+s = sector_distances(make_scan({0: 0.5}), math.pi)
+check("front blind under the old yaw", s['front'], None)
+check("front obstacle wrongly reported behind", s['rear'], 0.5)
+
+print("\n4b. min_valid_range drops the robot's own structure.")
+s = sector_distances(make_scan({180: 0.117, 0: 1.2}), YAW, min_valid_range=0.20)
+check("self-return filtered from rear", s['rear'], None)
+check("real obstacle ahead still seen", s['front'], 1.2)
 
 print("\n5. Invalid returns are dropped, not treated as obstacles.")
 sc = make_scan({}, default=float('inf'))
@@ -74,7 +81,7 @@ s = sector_distances(sc, YAW)
 check("front inf when all beyond max", s['front'], None)
 
 print("\n7. Nearest wins within a sector.")
-s = sector_distances(make_scan({180: 2.0, 175: 0.8, 185: 1.5}), YAW)
+s = sector_distances(make_scan({0: 2.0, -5: 0.8, 5: 1.5}), YAW)
 check("front takes the min", s['front'], 0.8)
 
 print("\n8. wrap_angle sanity.")

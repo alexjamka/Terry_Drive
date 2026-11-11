@@ -2,14 +2,15 @@
 """
 Shared LaserScan helpers for Buddy's reactive behaviours.
 
-Everything here works in the ROBOT's frame, not the lidar's. That distinction
-matters: Buddy's X4 is mounted rotated 180 deg (see the laser_tf static
-transform in buddy_hardware.launch.py), so scan angle 0 points out the BACK of
-the robot. Treating scan angle 0 as "forward" would make the robot steer away
-from open space and into walls.
+Everything here works in the ROBOT's frame, not the lidar's. Getting the
+lidar's mounting yaw wrong mirrors every avoidance decision - the robot steers
+away from open space and into walls - so resolve_scan_yaw() reads it out of TF
+rather than hardcoding it, and callers log what they found at startup.
 
-Rather than hardcode the flip, resolve_scan_yaw() reads it out of TF, so it
-stays correct if the lidar is ever remounted.
+On Buddy the offset is 0: laser-frame 0 deg points forward. Verified against a
+landmark - the 40x40 mm extrusion behind the lidar appears at 0.117 m and lands
+at laser 180 deg, which is the robot's rear. The launch file previously claimed
+180 deg here, which inverted avoidance; see its laser_tf comment.
 """
 
 import math

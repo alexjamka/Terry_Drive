@@ -63,8 +63,8 @@ class Wanderer(Node):
         self.declare_parameter('start_enabled', True)
         self.declare_parameter('base_frame', 'BuddyBaseFootprint_link')
         self.declare_parameter('scan_frame', 'laser')
-        self.declare_parameter('scan_yaw_offset', math.pi)
-        # Rejects the robot's own structure, which the X4 sees at ~0.12 m.
+        self.declare_parameter('scan_yaw_offset', 0.0)
+        # Rejects the 40x40 mm extrusion behind the lidar, seen at 0.117 m.
         self.declare_parameter('min_valid_range', 0.20)
 
         g = lambda n: self.get_parameter(n).value
