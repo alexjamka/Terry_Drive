@@ -99,7 +99,7 @@ If that says 0.0, the static transform isn't up and avoidance will be inverted.
 ## Node graph
 
 ```
-ESP32 ──UART──> buddy_serial_bridge ──> /odom + odom->base TF
+ESP32 ───USB───> buddy_serial_bridge ──> /odom + odom->base TF
                         ^
                     /cmd_vel
                         │
