@@ -26,8 +26,23 @@ class BuddySerialBridge(Node):
 
         # Robot parameters (must match ESP32 firmware)
         self.WHEEL_SEPARATION = 0.3302
-        self.WHEEL_DIAMETER = 0.070
-        self.TICKS_PER_REV = 526  # 11 PPR * 131 * 4 quadrature
+        # Measured 2026-11-11: drive wheels are 2.5" diameter, not 0.070 m.
+        self.WHEEL_DIAMETER = 0.0635
+        # Derived from a field calibration rather than the datasheet. The old
+        # value 526 carried the comment "11 PPR * 131 * 4 quadrature", which
+        # actually multiplies to 5764 - so it never matched its own arithmetic.
+        #
+        # Calibration: commanded a drive until odom read 0.521 m (1246 ticks
+        # centre average at the old scale); the tape measure said 21-22".
+        # With the corrected 2.5" wheel that gives TICKS_PER_REV 445-466,
+        # i.e. 455 +/- 10. The two old errors were nearly cancelling - wheel
+        # too big (+10.2% on METERS_PER_TICK) against ticks/rev too big
+        # (-13%) - which is why odom was only ~5% out and the fault hid.
+        #
+        # To refine without slip: lift the robot, mark a wheel, turn it exactly
+        # one revolution by hand and count the tick delta. That is exact where
+        # a driving measurement is contaminated by wheel slip.
+        self.TICKS_PER_REV = 455
         self.METERS_PER_TICK = (self.WHEEL_DIAMETER * math.pi) / self.TICKS_PER_REV
 
         # Odometry state

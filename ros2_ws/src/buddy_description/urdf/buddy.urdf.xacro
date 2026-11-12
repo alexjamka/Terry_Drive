@@ -3,7 +3,7 @@
 
   <xacro:property name="base_radius" value="0.1651"/>
   <xacro:property name="base_length" value="0.1524"/>
-  <xacro:property name="wheel_radius" value="0.0381"/>
+  <xacro:property name="wheel_radius" value="0.03175"/>  <!-- measured: 2.5" dia -->
 
   <material name="Buddy_Base_Blue">
     <color rgba="0 0 1 1"/>
@@ -50,7 +50,7 @@
   <joint name="BuddyBaseFootprint_joint" type="fixed">
     <parent link="BuddyBaseFootprint_link"/>
     <child link="BuddyBase_link"/>
-    <origin xyz="-0.1016 0 0.12" rpy="0 0 0"/>
+    <origin xyz="-0.1016 0 0.13175" rpy="0 0 0"/>
   </joint>
 
   <link name="BuddyNeck_link">
@@ -126,7 +126,10 @@
   <joint name="LidarMount_to_base" type="fixed">
     <parent link="BuddyBase_link"/>
     <child link="LidarMount_link"/>
-    <origin xyz=".05 0 0.124"/>
+    <!-- Measured 2026-11-11: lidar 16" (0.4064 m) above the floor and
+         5" (0.127 m) forward of the chassis centre, looking top-down.
+         z here is 0.4064 - 0.13175 (the base plate height). -->
+    <origin xyz="0.127 0 0.27465"/>
   </joint>
 
   <link name="BuddyWheelRight_link">
