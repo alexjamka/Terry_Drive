@@ -18,6 +18,7 @@ from tf2_ros import TransformBroadcaster
 import serial
 import math
 import threading
+import time
 
 class BuddySerialBridge(Node):
     def __init__(self):
@@ -39,35 +40,47 @@ class BuddySerialBridge(Node):
 
         # Serial.
         #
-        # The ESP32 is connected over USB, not the Jetson's 40-pin UART. Both
-        # the ESP32 and the YDLidar are CP2102 bridges reporting serial "0001",
-        # so /dev/serial/by-id collides and ttyUSB* ordering is not stable
-        # across reboots - this by-path name is tied to the physical USB socket.
-        # Re-derive after moving cables with:  ls -l /dev/serial/by-path/
-        self.declare_parameter(
-            'port', '/dev/serial/by-path/platform-3610000.usb-usb-0:2.4:1.0-port0')
+        # The ESP32 is on USB. Both it and the YDLidar are CP2102 bridges
+        # reporting serial "0001", so /dev/serial/by-id collides, and ttyUSB*
+        # order is unstable. by-path is stable only until a cable moves - which
+        # it has, repeatedly. So the default is to AUTODETECT: open each
+        # candidate and keep the one that speaks our protocol.
+        #
+        # Set `port` explicitly to skip detection.
+        self.declare_parameter('port', 'auto')
         self.declare_parameter('baud', 115200)
+        self.declare_parameter('detect_timeout', 2.5)
         # An encoder jump larger than this means the ESP32 reset and its tick
         # counters restarted at zero; integrating that delta would teleport the
         # odometry. ~36 ticks is a full-speed frame at 20 Hz.
         self.declare_parameter('max_tick_jump', 500)
 
-        port = self.get_parameter('port').value
         baud = self.get_parameter('baud').value
         self.max_tick_jump = self.get_parameter('max_tick_jump').value
+        requested = self.get_parameter('port').value
 
-        try:
-            # Opening a CP2102 toggles DTR/RTS, which resets the ESP32. That's
-            # fine - we re-baseline on the first encoder frame - but it means
-            # the base is briefly unresponsive right after this node starts.
-            self.ser = serial.Serial(port, baud, timeout=0.05)
-            self.get_logger().info(f'Connected to ESP32 on {port}')
-        except Exception as e:
-            self.ser = None
+        if requested and requested != 'auto':
+            port = requested
+        else:
+            port = self._detect_port(
+                baud, self.get_parameter('detect_timeout').value)
+
+        self.ser = None
+        if port:
+            try:
+                # Opening a CP2102 toggles DTR/RTS, which resets the ESP32.
+                # That's fine - we re-baseline on the first encoder frame - but
+                # the base is briefly unresponsive right after this starts.
+                self.ser = serial.Serial(port, baud, timeout=0.05)
+                self.get_logger().info(f'Connected to ESP32 on {port}')
+            except Exception as e:
+                self.get_logger().error(f'Failed to open {port}: {e}')
+        if self.ser is None:
             self.get_logger().error(
-                f'Failed to open {port}: {e}. The base will not move and no '
-                f'odometry will be published. Check `ls -l /dev/serial/by-path/` '
-                f'and set the `port` parameter.')
+                'No ESP32 found. The base will not move and no odometry will '
+                'be published. Check `ls -l /dev/serial/by-path/`, confirm the '
+                'board is powered, and set the `port` parameter if autodetect '
+                'picked wrong.')
 
         # Publishers (UNCOMMENTED)
         self.odom_pub = self.create_publisher(Odometry, '/odom', 10)
@@ -86,6 +99,39 @@ class BuddySerialBridge(Node):
         self.serial_thread.start()
 
         self.get_logger().info('Buddy serial bridge started. Odom active.')
+
+    def _detect_port(self, baud, timeout):
+        """
+        Find the port that emits our 'E:<l>,<r>' encoder frames.
+
+        Skips ports already held by another process (the lidar driver, say),
+        so this is safe to run while the rest of the stack is up.
+        """
+        import glob
+        candidates = sorted(glob.glob('/dev/serial/by-path/*')) or \
+            sorted(glob.glob('/dev/ttyUSB*')) + sorted(glob.glob('/dev/ttyACM*'))
+        self.get_logger().info(
+            f'Autodetecting ESP32 across {len(candidates)} serial port(s)...')
+        for cand in candidates:
+            try:
+                probe = serial.Serial(cand, baud, timeout=0.2)
+            except Exception as e:
+                self.get_logger().info(f'  {cand}: unavailable ({e.__class__.__name__})')
+                continue
+            try:
+                buf = ''
+                deadline = time.time() + timeout
+                while time.time() < deadline:
+                    buf += probe.read(256).decode('utf-8', errors='ignore')
+                    for line in buf.split('\n'):
+                        line = line.strip()
+                        if line.startswith('E:') and ',' in line:
+                            self.get_logger().info(f'  {cand}: found encoder frames')
+                            return cand
+                self.get_logger().info(f'  {cand}: no encoder frames')
+            finally:
+                probe.close()
+        return None
 
     def cmd_vel_callback(self, msg):
         if self.ser is None:
