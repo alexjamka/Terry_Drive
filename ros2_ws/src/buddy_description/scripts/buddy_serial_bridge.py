@@ -119,6 +119,14 @@ class BuddySerialBridge(Node):
                 self.get_logger().info(f'  {cand}: unavailable ({e.__class__.__name__})')
                 continue
             try:
+                # Opening a CP2102 asserts DTR/RTS, which drives the ESP32's
+                # auto-reset circuit. Release both and let it boot before
+                # listening, or the whole detect window is spent in reset and
+                # a perfectly healthy board reports "no encoder frames".
+                probe.setDTR(False)
+                probe.setRTS(False)
+                time.sleep(1.6)
+                probe.reset_input_buffer()
                 buf = ''
                 deadline = time.time() + timeout
                 while time.time() < deadline:
