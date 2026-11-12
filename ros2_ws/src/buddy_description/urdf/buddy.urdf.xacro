@@ -39,10 +39,18 @@
 
   <link name="BuddyBaseFootprint_link"/>
 
+  <!-- BuddyBaseFootprint_link is the frame odometry integrates, so it MUST sit
+       on the drive axle: a differential drive pivots about the midpoint between
+       its drive wheels. The wheels were moved 0.1016 m (4") forward on
+       2026-11-11, so BuddyBase_link now sits that far BEHIND the footprint.
+       Leaving the footprint at the old position would make the robot physically
+       swing the laser through a 0.1016 m arc during an in-place turn while
+       odometry reported pure rotation - which misleads scan matching exactly
+       when mapping is most fragile. -->
   <joint name="BuddyBaseFootprint_joint" type="fixed">
     <parent link="BuddyBaseFootprint_link"/>
     <child link="BuddyBase_link"/>
-    <origin xyz="0 0 0.12" rpy="0 0 0"/>
+    <origin xyz="-0.1016 0 0.12" rpy="0 0 0"/>
   </joint>
 
   <link name="BuddyNeck_link">
@@ -161,14 +169,14 @@
     <parent link="BuddyBase_link"/>
     <child link="BuddyWheelRight_link"/>
     <axis xyz="0 0 -1"/>
-    <origin xyz="0 -0.1651 -0.1" rpy="1.5708 0 0"/>
+    <origin xyz="0.1016 -0.1651 -0.1" rpy="1.5708 0 0"/>
   </joint>
 
   <joint name="wheel_to_base_left" type="continuous">
     <parent link="BuddyBase_link"/>
     <child link="BuddyWheelLeft_link"/>
     <axis xyz="0 0 -1"/>
-    <origin xyz="0 0.1651 -0.1" rpy="1.5708 0 0"/>
+    <origin xyz="0.1016 0.1651 -0.1" rpy="1.5708 0 0"/>
   </joint>
 
   <link name="caster_link">

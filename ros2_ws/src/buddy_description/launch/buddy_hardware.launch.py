@@ -28,6 +28,9 @@ def generate_launch_description():
     #   follow  - person following, same guard, plus the perception stack
     #   nav2    - goal-based navigation; Nav2's own costmaps do the avoiding,
     #             so the guard stays out of the way
+    #   teleop  - you drive with the keyboard; the guard still enforces
+    #             obstacle limits. This is the mode for BUILDING A MAP:
+    #             deliberate driving closes loops, random wandering does not.
     #   idle    - sensors, TF and Foxglove only. Good for bringup debugging.
     #
     mode = LaunchConfiguration('mode')
@@ -36,15 +39,16 @@ def generate_launch_description():
     is_wander = IfCondition(PythonExpression(["'", mode, "' == 'wander'"]))
     is_follow = IfCondition(PythonExpression(["'", mode, "' == 'follow'"]))
     is_nav2 = IfCondition(PythonExpression(["'", mode, "' == 'nav2'"]))
-    # The reactive behaviours share the guard.
+    # Everything that drives through /cmd_vel_raw shares the guard - teleop
+    # included, so a human driver still cannot run the robot into a wall.
     is_reactive = IfCondition(
-        PythonExpression(["'", mode, "' in ('wander', 'follow')"]))
+        PythonExpression(["'", mode, "' in ('wander', 'follow', 'teleop')"]))
     slam_on = IfCondition(PythonExpression(["'", use_slam, "' == 'true'"]))
 
     args = [
         DeclareLaunchArgument(
             'mode', default_value='idle',
-            choices=['idle', 'wander', 'follow', 'nav2'],
+            choices=['idle', 'wander', 'follow', 'nav2', 'teleop'],
             description='Who drives the base.'),
         DeclareLaunchArgument(
             'use_slam', default_value='true',
