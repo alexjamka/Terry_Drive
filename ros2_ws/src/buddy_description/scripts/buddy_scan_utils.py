@@ -33,7 +33,8 @@ def wrap_angle(a):
     return (np.asarray(a) + math.pi) % (2.0 * math.pi) - math.pi
 
 
-def scan_to_robot_frame(scan, yaw_offset, min_valid_range=0.0):
+def scan_to_robot_frame(scan, yaw_offset, min_valid_range=0.0,
+                        self_mask_from_deg=165.0, self_mask_range=0.25):
     """
     Convert a LaserScan into (bearings, ranges) in the robot frame.
 
@@ -42,11 +43,19 @@ def scan_to_robot_frame(scan, yaw_offset, min_valid_range=0.0):
     would invent a phantom obstacle at the edge of the sensor. The X4 reports a
     hard 0 for "no return", which range_min filtering already removes.
 
-    min_valid_range additionally rejects returns closer than a given distance.
-    Buddy's lidar sees a few rays of the robot's own structure at ~0.12 m, and
-    a permanent self-return inside the stop distance pins the base in place
-    forever. Keep this comfortably below stop_distance so a real obstacle is
-    still caught on approach.
+    The robot's own structure (a 40x40 mm extrusion ~0.117 m dead astern) must
+    be rejected, but rejecting it BY RANGE is dangerous and caused a real
+    collision: a flat min_valid_range of 0.20 m meant that as the robot closed
+    on a wall, the wall crossed inside the filter, every front return was
+    discarded, the sector went EMPTY, and an empty sector reads as +inf - i.e.
+    "clear". The guard then drove at full speed into it.
+
+    So the self-return is masked by ANGLE instead: returns are dropped only if
+    they are both beyond self_mask_from_deg of dead ahead (i.e. astern, where
+    the extrusion is) AND closer than self_mask_range. A genuine obstacle
+    anywhere else stays visible right down to the sensor floor.
+
+    min_valid_range is now just the sensor floor; keep it small.
 
     Returns two float arrays of equal length, possibly empty.
     """
@@ -61,7 +70,15 @@ def scan_to_robot_frame(scan, yaw_offset, min_valid_range=0.0):
     if scan.range_max > 0:
         good &= ranges < scan.range_max
 
-    return wrap_angle(angles[good] + yaw_offset), ranges[good]
+    bearings = wrap_angle(angles + yaw_offset)
+
+    # Drop only the robot's own structure: close AND astern. Never drop a close
+    # return that could be a real obstacle in a direction we might drive.
+    if self_mask_range > 0.0:
+        astern = np.abs(bearings) >= math.radians(self_mask_from_deg)
+        good &= ~(astern & (ranges < self_mask_range))
+
+    return bearings[good], ranges[good]
 
 
 def min_range_in_sector(bearings, ranges, lo, hi):
@@ -86,14 +103,17 @@ def min_range_in_sector(bearings, ranges, lo, hi):
 def sector_distances(scan, yaw_offset,
                      front_half=DEFAULT_FRONT_HALF_ANGLE,
                      side_span=DEFAULT_SIDE_SPAN,
-                     min_valid_range=0.0):
+                     min_valid_range=0.0,
+                     self_mask_from_deg=165.0,
+                     self_mask_range=0.25):
     """
     Summarise a scan as the nearest obstacle in each sector around the robot.
 
     Returns a dict with keys front, left, right, rear - all metres, +inf when
     that sector saw nothing.
     """
-    bearings, ranges = scan_to_robot_frame(scan, yaw_offset, min_valid_range)
+    bearings, ranges = scan_to_robot_frame(
+        scan, yaw_offset, min_valid_range, self_mask_from_deg, self_mask_range)
     return {
         'front': min_range_in_sector(bearings, ranges, -front_half, front_half),
         'left': min_range_in_sector(bearings, ranges, front_half, front_half + side_span),

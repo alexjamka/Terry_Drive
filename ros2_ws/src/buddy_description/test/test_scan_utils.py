@@ -69,6 +69,24 @@ s = sector_distances(make_scan({180: 0.117, 0: 1.2}), YAW, min_valid_range=0.20)
 check("self-return filtered from rear", s['rear'], None)
 check("real obstacle ahead still seen", s['front'], 1.2)
 
+print("\n4c. COLLISION REGRESSION: a wall closer than the old min_valid_range")
+print("    must still register. A flat 0.20 m range filter discarded every")
+print("    front return as the robot closed in, the sector went empty, empty")
+print("    reads as +inf = 'clear', and it drove into the wall at full speed.")
+wall = {d: 0.15 for d in range(-20, 21)}          # wall 0.15 m dead ahead
+s = sector_distances(make_scan(wall), YAW)
+check("wall at 0.15 m is SEEN ahead", s['front'], 0.15)
+s_old = sector_distances(make_scan(wall), YAW, min_valid_range=0.20)
+check("old range filter blinded it (the bug)", s_old['front'], None)
+
+print("\n4d. ...while the extrusion astern is still rejected by ANGLE.")
+s = sector_distances(make_scan({178: 0.117, 0: 1.4}), YAW)
+check("extrusion astern filtered", s['rear'], None)
+check("real obstacle ahead unaffected", s['front'], 1.4)
+print("\n4e. A genuine obstacle astern, beyond the mask range, is still seen.")
+s = sector_distances(make_scan({178: 0.60}), YAW)
+check("rear obstacle at 0.60 m seen", s['rear'], 0.60)
+
 print("\n5. Invalid returns are dropped, not treated as obstacles.")
 sc = make_scan({}, default=float('inf'))
 sc.ranges = [float('nan')] * N

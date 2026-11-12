@@ -71,8 +71,14 @@ class Wanderer(Node):
         self.declare_parameter('base_frame', 'BuddyBaseFootprint_link')
         self.declare_parameter('scan_frame', 'laser')
         self.declare_parameter('scan_yaw_offset', 0.0)
-        # Rejects the 40x40 mm extrusion behind the lidar, seen at 0.117 m.
-        self.declare_parameter('min_valid_range', 0.20)
+        # Sensor floor only. This used to be 0.20 to reject the extrusion
+        # astern, which blinded the FRONT sector at close range and caused a
+        # collision - the self-return is now masked by angle instead.
+        self.declare_parameter('min_valid_range', 0.05)
+        # The extrusion is ~0.117 m dead astern; drop returns only if they are
+        # both beyond this bearing from straight ahead AND this close.
+        self.declare_parameter('self_mask_from_deg', 165.0)
+        self.declare_parameter('self_mask_range', 0.25)
 
         g = lambda n: self.get_parameter(n).value
         self.cruise_speed = g('cruise_speed')
@@ -89,6 +95,8 @@ class Wanderer(Node):
         self.side_span = math.radians(g('side_span_deg'))
         self.enabled = g('start_enabled')
         self.min_valid_range = g('min_valid_range')
+        self.self_mask_from_deg = g('self_mask_from_deg')
+        self.self_mask_range = g('self_mask_range')
 
         if self.clear_distance <= self.turn_distance:
             self.get_logger().warn(
@@ -136,7 +144,8 @@ class Wanderer(Node):
             return  # mounting yaw not resolved yet; see __init__
         self.sectors = sector_distances(
             msg, self.scan_yaw, self.front_half, self.side_span,
-            self.min_valid_range)
+            self.min_valid_range, self.self_mask_from_deg,
+            self.self_mask_range)
 
     def _on_enable(self, msg: Bool):
         if msg.data != self.enabled:

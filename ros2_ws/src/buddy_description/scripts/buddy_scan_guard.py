@@ -58,8 +58,14 @@ class ScanGuard(Node):
         self.declare_parameter('scan_frame', 'laser')
         # Fallback only - the real value is read from TF at startup.
         self.declare_parameter('scan_yaw_offset', 0.0)
-        # Rejects the 40x40 mm extrusion behind the lidar, seen at 0.117 m.
-        self.declare_parameter('min_valid_range', 0.20)
+        # Sensor floor only. This used to be 0.20 to reject the extrusion
+        # astern, which blinded the FRONT sector at close range and caused a
+        # collision - the self-return is now masked by angle instead.
+        self.declare_parameter('min_valid_range', 0.05)
+        # The extrusion is ~0.117 m dead astern; drop returns only if they are
+        # both beyond this bearing from straight ahead AND this close.
+        self.declare_parameter('self_mask_from_deg', 165.0)
+        self.declare_parameter('self_mask_range', 0.25)
 
         g = lambda n: self.get_parameter(n).value
         self.stop_distance = g('stop_distance')
@@ -74,6 +80,8 @@ class ScanGuard(Node):
         self.base_frame = g('base_frame')
         self.scan_frame = g('scan_frame')
         self.min_valid_range = g('min_valid_range')
+        self.self_mask_from_deg = g('self_mask_from_deg')
+        self.self_mask_range = g('self_mask_range')
 
         if self.slow_distance <= self.stop_distance:
             self.get_logger().warn(
@@ -127,7 +135,8 @@ class ScanGuard(Node):
             return  # mounting yaw not resolved yet; see __init__
         self._sectors = sector_distances(
             msg, self.scan_yaw, self.front_half, self.side_span,
-            self.min_valid_range)
+            self.min_valid_range, self.self_mask_from_deg,
+            self.self_mask_range)
         self._last_scan_time = self.get_clock().now()
 
     def _on_cmd(self, msg: Twist):
