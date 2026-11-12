@@ -6,10 +6,30 @@
 #define ENB 26
 #define IN3 14
 #define IN4 27
-#define ENC_LA 18
-#define ENC_LB 19
-#define ENC_RA 4
-#define ENC_RB 13
+
+// Encoder pins, corrected 2026-11-11. These were transposed: driving the LEFT
+// wheel alone moved the counter labelled "right" and vice versa, so odometry
+// was attributing each wheel's motion to the other one. Measured by commanding
+// one wheel at a time and watching which counter changed.
+#define ENC_LA 4
+#define ENC_LB 13
+#define ENC_RA 18
+#define ENC_RB 19
+
+// Sign conventions, all measured on the bench rather than assumed.
+//
+// Target: a positive linear command drives the robot FORWARD, and both encoder
+// counts increase. Before these flags, a forward command drove the robot
+// BACKWARD with both wheels consistent, so both motors needed inverting; and
+// with the encoder pins corrected, the left wheel counts down when rolling
+// forward, so that one needs inverting too.
+//
+// If a drivetrain is rewired, re-derive these the same way: command one wheel,
+// watch which counter moves and in which direction.
+#define INVERT_LEFT_MOTOR    true
+#define INVERT_RIGHT_MOTOR   true
+#define INVERT_LEFT_ENCODER  true
+#define INVERT_RIGHT_ENCODER false
 
 #define WHEEL_SEPARATION 0.3302
 #define MAX_PWM 250
@@ -28,15 +48,21 @@ volatile long rightTicks = 0;
 
 float leftVel = 0.0;
 float rightVel = 0.0;
+// Last echoed command, so we only report changes (the host resends at 10 Hz
+// to feed the watchdog; echoing every resend would flood the link).
+float lastEchoL = 1e9;
+float lastEchoR = 1e9;
 unsigned long lastCmdTime = 0;
 unsigned long lastPubTime = 0;
 String buf = "";
 
 void IRAM_ATTR leftISR() {
-  leftTicks += digitalRead(ENC_LB) ? 1 : -1;
+  int d = digitalRead(ENC_LB) ? 1 : -1;
+  leftTicks += INVERT_LEFT_ENCODER ? -d : d;
 }
 void IRAM_ATTR rightISR() {
-  rightTicks += digitalRead(ENC_RB) ? 1 : -1;
+  int d = digitalRead(ENC_RB) ? 1 : -1;
+  rightTicks += INVERT_RIGHT_ENCODER ? -d : d;
 }
 
 int velToPwm(float v) {
@@ -46,9 +72,21 @@ int velToPwm(float v) {
   return constrain(p, -MAX_PWM, MAX_PWM);
 }
 
+// Confirms a command was parsed, independent of whether the motors have
+// power. Without this you cannot tell "command never arrived" from "motor
+// rail is off" during bench bring-up.
+void echoCmd() {
+  if (fabs(leftVel - lastEchoL) < 1e-4 && fabs(rightVel - lastEchoR) < 1e-4) return;
+  lastEchoL = leftVel; lastEchoR = rightVel;
+  Serial.print("CMD:"); Serial.print(leftVel, 4);
+  Serial.print(","); Serial.println(rightVel, 4);
+}
+
 void drive(float left, float right) {
   int lp = velToPwm(left);
   int rp = velToPwm(right);
+  if (INVERT_LEFT_MOTOR)  lp = -lp;
+  if (INVERT_RIGHT_MOTOR) rp = -rp;
 
   if (lp > 0) { digitalWrite(IN1, HIGH); digitalWrite(IN2, LOW); }
   else if (lp < 0) { digitalWrite(IN1, LOW); digitalWrite(IN2, HIGH); }
@@ -90,6 +128,7 @@ void loop() {
         leftVel = lin - (ang * WHEEL_SEPARATION / 2.0);
         rightVel = lin + (ang * WHEEL_SEPARATION / 2.0);
         lastCmdTime = millis();
+        echoCmd();
       }
       buf = "";
     } else buf += c;
@@ -104,6 +143,7 @@ void loop() {
         leftVel = lin - (ang * WHEEL_SEPARATION / 2.0);
         rightVel = lin + (ang * WHEEL_SEPARATION / 2.0);
         lastCmdTime = millis();
+        echoCmd();
       }
       buf = "";
     } else buf += c;
