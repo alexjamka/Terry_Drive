@@ -49,10 +49,15 @@ class Wanderer(Node):
         # 1.2 rad/s puts each wheel at 0.198 m/s, just above break-away.
         self.declare_parameter('turn_speed', 1.2)
         self.declare_parameter('back_speed', 0.20)
-        # Turn earlier than the guard stops, so normal wandering never actually
-        # trips the safety layer.
-        self.declare_parameter('turn_distance', 0.70)
-        self.declare_parameter('clear_distance', 0.95)
+        # Turn earlier than the guard stops (0.35 m), so normal wandering never
+        # trips the safety layer - but not so early that an ordinary room never
+        # looks clear. Measured live 2026-11-11: front clearance in this space
+        # sat at 0.55-0.90 m, so the original 0.70/0.95 pair meant the robot
+        # almost never saw "clear" and spent its time pirouetting, covering
+        # 0.47 m in two minutes. 0.50/0.65 leaves 0.15 m over the guard's stop
+        # and lets it commit to driving in normal indoor clutter.
+        self.declare_parameter('turn_distance', 0.50)
+        self.declare_parameter('clear_distance', 0.65)
         self.declare_parameter('min_turn_time', 0.6)
         self.declare_parameter('max_turn_time', 6.0)
         self.declare_parameter('back_time', 1.2)

@@ -100,45 +100,71 @@ class BuddySerialBridge(Node):
 
         self.get_logger().info('Buddy serial bridge started. Odom active.')
 
-    def _detect_port(self, baud, timeout):
+    def _detect_port(self, baud, timeout, attempts=3):
         """
         Find the port that emits our 'E:<l>,<r>' encoder frames.
 
-        Skips ports already held by another process (the lidar driver, say),
-        so this is safe to run while the rest of the stack is up.
+        Three things this has to get right, each learned the hard way:
+
+        * exclusive=True. pyserial's open does NOT fail just because another
+          process holds the port, so probing blind fought the lidar driver for
+          its tty - garbling both streams and then raising SerialException mid
+          read, which killed this node outright.
+        * An explicit reset into RUN mode. Opening a CP2102 asserts DTR/RTS,
+          driving the ESP32's auto-reset circuit; merely de-asserting both can
+          leave the chip in download mode, silent, and a healthy board then
+          reports "no encoder frames".
+        * Tolerate a failing candidate. A port that errors is skipped, not
+          fatal.
         """
         import glob
         candidates = sorted(glob.glob('/dev/serial/by-path/*')) or \
             sorted(glob.glob('/dev/ttyUSB*')) + sorted(glob.glob('/dev/ttyACM*'))
         self.get_logger().info(
             f'Autodetecting ESP32 across {len(candidates)} serial port(s)...')
-        for cand in candidates:
-            try:
-                probe = serial.Serial(cand, baud, timeout=0.2)
-            except Exception as e:
-                self.get_logger().info(f'  {cand}: unavailable ({e.__class__.__name__})')
-                continue
-            try:
-                # Opening a CP2102 asserts DTR/RTS, which drives the ESP32's
-                # auto-reset circuit. Release both and let it boot before
-                # listening, or the whole detect window is spent in reset and
-                # a perfectly healthy board reports "no encoder frames".
-                probe.setDTR(False)
-                probe.setRTS(False)
-                time.sleep(1.6)
-                probe.reset_input_buffer()
-                buf = ''
-                deadline = time.time() + timeout
-                while time.time() < deadline:
-                    buf += probe.read(256).decode('utf-8', errors='ignore')
-                    for line in buf.split('\n'):
-                        line = line.strip()
-                        if line.startswith('E:') and ',' in line:
-                            self.get_logger().info(f'  {cand}: found encoder frames')
-                            return cand
-                self.get_logger().info(f'  {cand}: no encoder frames')
-            finally:
-                probe.close()
+
+        for attempt in range(1, attempts + 1):
+            for cand in candidates:
+                try:
+                    # exclusive=True makes a port the lidar driver already owns
+                    # fail to open, which is exactly the skip we want.
+                    probe = serial.Serial(cand, baud, timeout=0.2, exclusive=True)
+                except Exception as e:
+                    self.get_logger().info(
+                        f'  {cand}: in use or unavailable ({e.__class__.__name__})')
+                    continue
+                try:
+                    # Pulse EN with GPIO0 high -> clean boot into RUN mode.
+                    probe.setDTR(False)
+                    probe.setRTS(True)
+                    time.sleep(0.2)
+                    probe.setRTS(False)
+                    time.sleep(1.5)
+                    probe.reset_input_buffer()
+                    buf = ''
+                    deadline = time.time() + timeout
+                    while time.time() < deadline:
+                        buf += probe.read(256).decode('utf-8', errors='ignore')
+                        if 'E:' in buf:
+                            for line in buf.split('\n'):
+                                line = line.strip()
+                                if line.startswith('E:') and ',' in line:
+                                    self.get_logger().info(
+                                        f'  {cand}: found encoder frames')
+                                    return cand
+                    self.get_logger().info(f'  {cand}: no encoder frames')
+                except Exception as e:
+                    self.get_logger().warn(
+                        f'  {cand}: probe failed ({e.__class__.__name__}: '
+                        f'{str(e)[:60]}), skipping')
+                finally:
+                    try:
+                        probe.close()
+                    except Exception:
+                        pass
+            if attempt < attempts:
+                self.get_logger().info(
+                    f'  no ESP32 on attempt {attempt}/{attempts}, retrying...')
         return None
 
     def cmd_vel_callback(self, msg):
