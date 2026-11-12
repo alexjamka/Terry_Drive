@@ -58,6 +58,15 @@ class Wanderer(Node):
         # and lets it commit to driving in normal indoor clutter.
         self.declare_parameter('turn_distance', 0.50)
         self.declare_parameter('clear_distance', 0.65)
+        # Pulsed turning. The drivetrain cannot turn slower than ~1.09 rad/s
+        # (break-away floors each wheel at 0.18 m/s), and the lidar only scans
+        # at 3.68 Hz - so a continuous turn puts ~19 deg between scans, more
+        # than correlative scan matching can associate, and SLAM maps smear.
+        # Bursting the turn drops the AVERAGE rate without going under
+        # break-away, so scans land in the gaps between bursts.
+        # Set turn_pulse_period to 0.0 for a continuous turn.
+        self.declare_parameter('turn_pulse_period', 0.45)
+        self.declare_parameter('turn_pulse_duty', 0.45)
         self.declare_parameter('min_turn_time', 0.6)
         self.declare_parameter('max_turn_time', 6.0)
         self.declare_parameter('back_time', 1.2)
@@ -86,6 +95,8 @@ class Wanderer(Node):
         self.back_speed = g('back_speed')
         self.turn_distance = g('turn_distance')
         self.clear_distance = g('clear_distance')
+        self.turn_pulse_period = g('turn_pulse_period')
+        self.turn_pulse_duty = g('turn_pulse_duty')
         self.min_turn_time = g('min_turn_time')
         self.max_turn_time = g('max_turn_time')
         self.back_time = g('back_time')
@@ -159,6 +170,19 @@ class Wanderer(Node):
         self.state = state
         self.state_since = self.get_clock().now()
 
+    def _turn_cmd(self):
+        """
+        Angular velocity for this tick, pulsed.
+
+        Returns full turn_speed during the 'on' fraction of each period and 0
+        otherwise. Average rate is turn_speed * duty, but every commanded burst
+        still clears break-away - which a simply-reduced turn_speed would not.
+        """
+        if self.turn_pulse_period <= 0.0:
+            return self.turn_speed * self.turn_dir
+        phase = (self._elapsed() % self.turn_pulse_period) / self.turn_pulse_period
+        return (self.turn_speed * self.turn_dir) if phase < self.turn_pulse_duty else 0.0
+
     def _pick_turn_dir(self):
         """Turn toward whichever side has more room; coin-flip if equal."""
         s = self.sectors
@@ -186,7 +210,7 @@ class Wanderer(Node):
                 # the 0.18 m/s break-away and simply stalls, so the robot would
                 # lurch straight instead of curving.
                 cmd.linear.x = 0.0
-                cmd.angular.z = self.turn_speed * self.turn_dir
+                cmd.angular.z = self._turn_cmd()
                 if self.get_clock().now() >= self.curiosity_until:
                     self.curiosity_until = None
             else:
@@ -200,7 +224,7 @@ class Wanderer(Node):
                     self.last_curiosity = self.get_clock().now()
 
         elif self.state == TURN:
-            cmd.angular.z = self.turn_speed * self.turn_dir
+            cmd.angular.z = self._turn_cmd()
             t = self._elapsed()
             if t >= self.min_turn_time and front > self.clear_distance:
                 self.last_curiosity = self.get_clock().now()

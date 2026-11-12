@@ -1,3 +1,22 @@
+# YDLidar S2PRO  (NOT an X4 - the device identifies itself as:
+#   Model: S2PRO   Firmware 3.1   Hardware 3   Scan Frequency 10.00 Hz
+#   Sample Rate 6.00K
+# It was configured from the vendor's X4.yaml for a long time. Correcting that
+# removed the point-count warnings and gives clean 360 deg scans, but it did
+# NOT change the rate: /scan runs at 3.68 Hz (1344 pts, 360 deg) because that
+# is the speed this unit's motor actually turns. The device info packet claims
+# 10 Hz / 6.00K; the arriving data says 3.68 Hz / ~5 kHz. Believe the data.
+#
+# Scan rate is NOT settable for this family. In the SDK, hasScanFrequencyCtrl()
+# explicitly excludes S4 (== S2PRO) and X4, so checkScanFrequency() is never
+# called and the `frequency` parameter below is silently ignored. Moving the
+# lidar off the USB hub onto the root USB-C port changed nothing either, so it
+# is not a power-droop problem.
+#
+# Consequence: at 3.68 Hz a 1.2 rad/s turn puts ~19 deg between scans, which is
+# more than correlative scan matching reliably associates - this is why SLAM
+# maps smear while turning. buddy_wanderer pulses its turns to work around it.
+# Check `Model:` in the driver's startup output before trusting this file.
 ydlidar_ros2_driver_node:
   ros__parameters:
     # NOT /dev/ttyUSB0 - that is the ESP32. Both the lidar and the ESP32 are
@@ -5,15 +24,16 @@ ydlidar_ros2_driver_node:
     # by-id collides and ttyUSB* ordering is not stable across reboots. This
     # by-path name is tied to the physical USB socket instead.
     # Re-derive after moving cables with:  ls -l /dev/serial/by-path/
-    port: /dev/serial/by-path/platform-3610000.usb-usb-0:2.2:1.0-port0
+    port: /dev/serial/by-path/platform-3610000.usb-usb-0:1:1.0-port0
     frame_id: laser
     ignore_array: ""
     baudrate: 128000
     lidar_type: 1
     device_type: 0
-    sample_rate: 5
+    sample_rate: 5            # MEASURED ~4950 samples/s. The device info packet
+                              # claims 6.00K but that is not what arrives.
     abnormal_check_count: 4
-    fixed_resolution: true
+    fixed_resolution: false   # let real revolutions through, do not force a point count
     reversion: true
     inverted: true
     auto_reconnect: true
