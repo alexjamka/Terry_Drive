@@ -35,12 +35,23 @@
 #define MAX_PWM 250
 
 // Below MIN_PWM the geared motors stall and buzz instead of turning, so any
-// nonzero command smaller than this gets bumped up to it. Without this, Nav2's
-// final in-place rotation (~0.2 rad/s -> PWM 27) never actually moves the base
-// and goals time out just short of completion. Commands under MIN_VEL are
-// treated as a genuine stop. Tune MIN_PWM up until the wheels reliably break
-// away from rest on carpet.
-#define MIN_PWM 40
+// nonzero command smaller than this gets bumped up to it. Commands under
+// MIN_VEL are treated as a genuine stop.
+//
+// Measured on the bench 2026-11-11 by ramping velocity and watching encoders:
+//   PWM  41- 83  neither wheel moves
+//   PWM  99       jitter only (+/-2 ticks)
+//   PWM 124       LEFT breaks away, right does not
+//   PWM 149       BOTH wheels turn reliably
+// The two motors differ slightly; 150 covers the stiffer (right) one.
+//
+// Consequence worth knowing: minimum achievable speed is 150/833 = 0.18 m/s.
+// There is no usable slower range open-loop, so a differential command whose
+// INNER wheel falls below that will stall the inner wheel - gentle arcs are
+// not achievable, only straight runs and in-place turns. Closing the loop
+// (PI, as in archive/buddy_motor_controller.ino) is what would buy back the
+// low-speed range, because the integrator winds up until the wheel breaks free.
+#define MIN_PWM 150
 #define MIN_VEL 0.005
 
 volatile long leftTicks = 0;

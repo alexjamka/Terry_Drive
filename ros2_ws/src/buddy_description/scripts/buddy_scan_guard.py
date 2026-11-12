@@ -47,7 +47,10 @@ class ScanGuard(Node):
         self.declare_parameter('front_half_angle_deg', 35.0)
         self.declare_parameter('side_span_deg', 55.0)
         self.declare_parameter('max_linear', 0.30)
-        self.declare_parameter('max_angular', 1.0)
+        # Must not clip the behaviours' turn commands: buddy_wanderer turns at
+        # 1.2 rad/s so each wheel clears the 0.18 m/s break-away. A 1.0 clamp
+        # here silently throttled that to 1.0.
+        self.declare_parameter('max_angular', 1.5)
         self.declare_parameter('cmd_timeout', 0.5)
         self.declare_parameter('scan_timeout', 1.0)
         self.declare_parameter('publish_rate', 20.0)
@@ -86,6 +89,12 @@ class ScanGuard(Node):
         self._sectors = None
         self._last_scan_time = None
 
+        # resolve_scan_yaw() below spins the node while waiting for TF, which
+        # can dispatch _on_scan before scan_yaw is assigned. Define it first
+        # and let the callback no-op until it is known, or startup races to an
+        # AttributeError depending on whether TF resolves on the first try.
+        self.scan_yaw = None
+
         # Lidar drivers publish sensor data BEST_EFFORT. Subscribing with the
         # default RELIABLE profile is QoS-incompatible, and ROS silently
         # delivers nothing - the guard just reports no_scan forever.
@@ -114,6 +123,8 @@ class ScanGuard(Node):
             f'front=+/-{math.degrees(self.front_half):.0f}deg')
 
     def _on_scan(self, msg: LaserScan):
+        if self.scan_yaw is None:
+            return  # mounting yaw not resolved yet; see __init__
         self._sectors = sector_distances(
             msg, self.scan_yaw, self.front_half, self.side_span,
             self.min_valid_range)
@@ -145,6 +156,12 @@ class ScanGuard(Node):
             lin = max(-self.max_linear, min(self.max_linear, self._last_cmd.linear.x))
             ang = max(-self.max_angular, min(self.max_angular, self._last_cmd.angular.z))
 
+            # NOTE: with the firmware's MIN_PWM floor at 150 (= break-away),
+            # any linear command below ~0.18 m/s is floored back up, so the
+            # proportional slow zone below cannot actually slow the base - it
+            # behaves as go-or-stop. Kept because stop_distance is the real
+            # safety line, and the wanderer turns at 0.70 m before this
+            # engages. Closing the velocity loop would make slowing effective.
             if lin > 0.0:
                 front = s['front']
                 if front <= self.stop_distance:

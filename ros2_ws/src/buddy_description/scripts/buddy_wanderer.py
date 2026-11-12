@@ -44,9 +44,11 @@ class Wanderer(Node):
     def __init__(self):
         super().__init__('buddy_wanderer')
 
-        self.declare_parameter('cruise_speed', 0.16)
-        self.declare_parameter('turn_speed', 0.7)
-        self.declare_parameter('back_speed', 0.10)
+        # Must stay above the drivetrain's break-away (0.18 m/s, PWM 149).
+        self.declare_parameter('cruise_speed', 0.20)
+        # 1.2 rad/s puts each wheel at 0.198 m/s, just above break-away.
+        self.declare_parameter('turn_speed', 1.2)
+        self.declare_parameter('back_speed', 0.20)
         # Turn earlier than the guard stops, so normal wandering never actually
         # trips the safety layer.
         self.declare_parameter('turn_distance', 0.70)
@@ -98,6 +100,12 @@ class Wanderer(Node):
         self.last_curiosity = self.get_clock().now()
         self.curiosity_until = None
 
+        # resolve_scan_yaw() below spins the node while waiting for TF, which
+        # can dispatch _on_scan before scan_yaw is assigned. Define it first
+        # and let the callback no-op until it is known, or startup races to an
+        # AttributeError depending on whether TF resolves on the first try.
+        self.scan_yaw = None
+
         # Lidar drivers publish sensor data BEST_EFFORT. Subscribing with the
         # default RELIABLE profile is QoS-incompatible, and ROS silently
         # delivers nothing - the guard just reports no_scan forever.
@@ -119,6 +127,8 @@ class Wanderer(Node):
             f'cruise={self.cruise_speed} turn_at={self.turn_distance}m')
 
     def _on_scan(self, msg: LaserScan):
+        if self.scan_yaw is None:
+            return  # mounting yaw not resolved yet; see __init__
         self.sectors = sector_distances(
             msg, self.scan_yaw, self.front_half, self.side_span,
             self.min_valid_range)
@@ -158,8 +168,11 @@ class Wanderer(Node):
                 self.turn_dir = self._pick_turn_dir()
                 self._goto(TURN)
             elif self.curiosity_until is not None:
-                cmd.linear.x = self.cruise_speed * 0.5
-                cmd.angular.z = self.turn_speed * 0.6 * self.turn_dir
+                # In-place turn, NOT an arc. An arc's inner wheel lands below
+                # the 0.18 m/s break-away and simply stalls, so the robot would
+                # lurch straight instead of curving.
+                cmd.linear.x = 0.0
+                cmd.angular.z = self.turn_speed * self.turn_dir
                 if self.get_clock().now() >= self.curiosity_until:
                     self.curiosity_until = None
             else:
