@@ -46,6 +46,12 @@ run_integration() {
 echo "=== unit: scan sector maths ==="
 python3 "$HERE/test_scan_utils.py" || rc=1
 
+echo "=== unit: IMU protocol/calibration ==="
+python3 "$HERE/test_imu.py" || rc=1
+
+echo "=== integration: serial/IMU over a fake ESP32 PTY ==="
+python3 "$HERE/test_serial_imu_integration.py" || rc=1
+
 run_integration scan_guard_integration buddy_scan_guard.py
 run_integration wanderer_integration buddy_scan_guard.py buddy_wanderer.py
 

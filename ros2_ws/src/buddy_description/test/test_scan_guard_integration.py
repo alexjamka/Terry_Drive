@@ -89,9 +89,23 @@ def main():
           f"ang={out.angular.z:.3f}" if out else "no /cmd_vel")
 
     print("\n4. Obstacle 0.55 m ahead (slow zone 0.35-0.75).")
+    # Request ABOVE the achievable floor (min_linear 0.26): scaling is
+    # meaningful, so the output must drop - but not below what the drivetrain
+    # can sustain, because a scaled-but-unachievable command makes the base
+    # judder rather than crawl. See the min_linear note in buddy_scan_guard.
+    out = h.drive(2.0, 0.55, 0.40, 0.0)
+    ok = out is not None and 0.26 - 1e-6 <= out.linear.x < 0.40
+    check("forward is scaled down, not below the achievable floor", ok,
+          f"lin={out.linear.x:.3f}" if out else "no /cmd_vel")
+
+    print("\n4b. Same obstacle, request already BELOW the floor.")
+    # 0.20 m/s is under min_linear, so it cannot be slowed at all. It must pass
+    # through unchanged - and must NOT be lifted to 0.26, or the guard would
+    # speed up the robot it exists to protect.
     out = h.drive(2.0, 0.55, 0.20, 0.0)
-    ok = out is not None and 0.0 < out.linear.x < 0.20
-    check("forward is scaled down", ok, f"lin={out.linear.x:.3f}" if out else "no /cmd_vel")
+    ok = out is not None and abs(out.linear.x - 0.20) < 0.02
+    check("sub-floor request passes through, never raised", ok,
+          f"lin={out.linear.x:.3f}" if out else "no /cmd_vel")
 
     print("\n5. Stop publishing commands -> watchdog.")
     h.got.clear()

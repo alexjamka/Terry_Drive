@@ -1,0 +1,10 @@
+free_thresh: 0.196
+image: mapping_cal_motion_020_010_20261113.pgm
+mode: trinary
+negate: 0
+occupied_thresh: 0.65
+origin:
+- -2.674632243812792
+- -7.1417686751692155
+- 0.0
+resolution: 0.05000000074505806

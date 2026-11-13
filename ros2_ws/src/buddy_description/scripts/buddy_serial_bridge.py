@@ -14,6 +14,9 @@ import rclpy
 from rclpy.node import Node
 from geometry_msgs.msg import Twist, TransformStamped
 from nav_msgs.msg import Odometry
+from sensor_msgs.msg import Imu
+from rclpy.qos import qos_profile_sensor_data
+from buddy_imu import ImuProcessor, parse_imu_line
 from tf2_ros import TransformBroadcaster
 import serial
 import math
@@ -25,7 +28,32 @@ class BuddySerialBridge(Node):
         super().__init__('buddy_serial_bridge')
 
         # Robot parameters (must match ESP32 firmware)
-        self.WHEEL_SEPARATION = 0.3302
+        # EFFECTIVE track width for odometry, not the geometric one.
+        #
+        # Owner confirmed 2026-11-13: physical wheel centres are 15 inches
+        # (0.381 m) apart, including during the recorded calibration runs.
+        # The old 13-inch physical-width assertion was wrong. This effective
+        # width is 5.3% above the actual track, not 21%.
+        #
+        # Keep the empirical yaw calibration: initial odometry used 0.3302,
+        # and lidar comparisons measured ~1.215 excess rotation. Multiplying
+        # that old estimate by 1.215 gave 0.4012. The correction included BOTH
+        # the wrong geometry and tyre scrub; it was not all slip.
+        # Firmware command kinematics and URDF use physical 0.381 m instead.
+        # Do not replace effective width with physical width without a fresh
+        # yaw calibration. See CLAUDE.md for firmware deployment status.
+        # Refined 2026-11-13 after the owner corrected the physical track to
+        # 15" (0.381 m). The original 0.4012 was derived as 0.3302 x 1.215,
+        # using the WRONG geometric baseline (13"), so most of what was called
+        # "tyre scrub" was really the bad track figure. Re-measured against two
+        # independent sensors with 0.4012 in place:
+        #
+        #   lidar scan alignment : gain 0.968 (odom under-reports ~3%)
+        #   gyro integration     : +92.5 vs +94.3, -92.3 vs -95.3 deg (~2-3%)
+        #
+        # 0.4012 x 0.968 = 0.3884, which is the physical 0.381 plus ~2% scrub -
+        # a far more believable number than the 21% implied before.
+        self.WHEEL_SEPARATION = 0.3884
         # Measured 2026-11-11: drive wheels are 2.5" diameter, not 0.070 m.
         self.WHEEL_DIAMETER = 0.0635
         # Derived from a field calibration rather than the datasheet. The old
@@ -52,6 +80,21 @@ class BuddySerialBridge(Node):
         self.prev_left_ticks = None
         self.prev_right_ticks = None
         self.last_encoder_time = None
+
+        # The EKF must be the only odom->base TF publisher when enabled.
+        # 2026-11-13: +angular physically turned RIGHT (owner observed),
+        # while encoder yaw was positive; gyro and lidar both measured negative.
+        # The ESP's L/R labels are physically exchanged. Normalize commands and
+        # encoder sides together at this boundary; preserve calibrated scales.
+        self.declare_parameter('swap_wheel_sides', True)
+        self.swap_wheel_sides = self.get_parameter('swap_wheel_sides').value
+        self.declare_parameter('publish_tf', True)
+        self.declare_parameter('odom_topic', '/odom')
+        self.declare_parameter('imu_bias_samples', 200)
+        self.publish_odom_tf = self.get_parameter('publish_tf').value
+        self.imu_processor = ImuProcessor(
+            samples=self.get_parameter('imu_bias_samples').value)
+        self.last_wheel_motion_ns = 0
 
         # Serial.
         #
@@ -86,7 +129,7 @@ class BuddySerialBridge(Node):
                 # Opening a CP2102 toggles DTR/RTS, which resets the ESP32.
                 # That's fine - we re-baseline on the first encoder frame - but
                 # the base is briefly unresponsive right after this starts.
-                self.ser = serial.Serial(port, baud, timeout=0.05)
+                self.ser = serial.Serial(port, baud, timeout=0.05, exclusive=True)
                 self.get_logger().info(f'Connected to ESP32 on {port}')
             except Exception as e:
                 self.get_logger().error(f'Failed to open {port}: {e}')
@@ -98,7 +141,12 @@ class BuddySerialBridge(Node):
                 'picked wrong.')
 
         # Publishers (UNCOMMENTED)
-        self.odom_pub = self.create_publisher(Odometry, '/odom', 10)
+        self.odom_pub = self.create_publisher(
+            Odometry, self.get_parameter('odom_topic').value, 10)
+        self.imu_raw_pub = self.create_publisher(
+            Imu, '/imu/data_raw', qos_profile_sensor_data)
+        self.imu_pub = self.create_publisher(
+            Imu, '/imu/data', qos_profile_sensor_data)
         self.tf_broadcaster = TransformBroadcaster(self)
 
         # Subscriber
@@ -185,7 +233,10 @@ class BuddySerialBridge(Node):
     def cmd_vel_callback(self, msg):
         if self.ser is None:
             return
-        self.last_cmd = f'V:{msg.linear.x:.4f},{msg.angular.z:.4f}\n'
+        angular = -msg.angular.z if self.swap_wheel_sides else msg.angular.z
+        # Avoid '-0.0000': the stationary calibration check recognizes zero.
+        angular = 0.0 if abs(angular) < 0.00005 else angular
+        self.last_cmd = f'V:{msg.linear.x:.4f},{angular:.4f}\n'
         self.last_cmd_time = self.get_clock().now()
         try:
             self.ser.write(self.last_cmd.encode())
@@ -219,6 +270,10 @@ class BuddySerialBridge(Node):
                         line = line.strip()
                         if line.startswith('E:'):
                             self.process_encoder_line(line)
+                        elif line.startswith('I:'):
+                            self.process_imu_line(line)
+                        elif line.startswith('IMU:'):
+                            self.get_logger().info(line)
             except Exception as e:
                 self.get_logger().warn(f'Serial read error: {e}')
 
@@ -230,6 +285,8 @@ class BuddySerialBridge(Node):
         except (ValueError, IndexError):
             return
 
+        if self.swap_wheel_sides:
+            left_ticks, right_ticks = right_ticks, left_ticks
         now = self.get_clock().now()
 
         if self.prev_left_ticks is None:
@@ -272,10 +329,55 @@ class BuddySerialBridge(Node):
         self.x += dist_center * math.cos(self.theta)
         self.y += dist_center * math.sin(self.theta)
 
+        if delta_left or delta_right:
+            self.last_wheel_motion_ns = now.nanoseconds
+
         stamp = now.to_msg()
         # Publish both the TF tree update and the physical Odometry topic
-        self.publish_tf(stamp)
+        if self.publish_odom_tf:
+            self.publish_tf(stamp)
         self.publish_odom(stamp, dist_center / dt, delta_theta / dt)
+
+    def process_imu_line(self, line):
+        try:
+            sample = parse_imu_line(line)
+        except ValueError:
+            return
+        now = self.get_clock().now()
+        command_age = (now - self.last_cmd_time).nanoseconds / 1e9
+        commanded = command_age < 0.5 and self.last_cmd != 'V:0.0000,0.0000\n'
+        stationary = (self.last_encoder_time is not None and
+                      (now - self.last_encoder_time).nanoseconds < 250_000_000 and
+                      now.nanoseconds - self.last_wheel_motion_ns > 500_000_000 and
+                      not commanded)
+        old_bias = self.imu_processor.bias
+        result = self.imu_processor.update(sample, now.nanoseconds, stationary)
+        if result is None:
+            return
+        stamp_ns, corrected = result
+        msg = Imu()
+        msg.header.stamp.sec = stamp_ns // 1_000_000_000
+        msg.header.stamp.nanosec = stamp_ns % 1_000_000_000
+        msg.header.frame_id = 'BuddyImu_link'
+        msg.orientation.w = 1.0
+        msg.orientation_covariance[0] = -1.0  # orientation is not measured
+        for i, axis in enumerate(('x', 'y', 'z')):
+            setattr(msg.angular_velocity, axis, sample.gyro[i])
+            setattr(msg.linear_acceleration, axis, sample.acceleration[i])
+            # Conservative initial variances, not a calibrated noise model.
+            msg.angular_velocity_covariance[i * 4] = 0.005 ** 2
+            msg.linear_acceleration_covariance[i * 4] = 0.2 ** 2
+        self.imu_raw_pub.publish(msg)
+        if corrected is not None:
+            for i, axis in enumerate(('x', 'y', 'z')):
+                setattr(msg.angular_velocity, axis, corrected[i])
+            self.imu_pub.publish(msg)
+        if old_bias is None and self.imu_processor.bias is not None:
+            self.get_logger().info(
+                'IMU gyro bias calibrated (rad/s): ' +
+                ', '.join(f'{x:.6f}' for x in self.imu_processor.bias))
+        elif old_bias is not None and self.imu_processor.bias is None:
+            self.get_logger().warn('IMU clock reset/outage: recalibrating gyro')
 
     def publish_tf(self, stamp):
         t = TransformStamped()
@@ -305,6 +407,12 @@ class BuddySerialBridge(Node):
         odom.twist.twist.linear.x = linear_vel
         odom.twist.twist.angular.z = angular_vel
         
+        # Nonzero variances let robot_localization weight wheel/IMU rates.
+        # Pose is deliberately not fused; all wheel values share encoders.
+        for i, variance in enumerate((0.05**2, 0.05**2, 1.0, 1.0, 1.0, 0.1**2)):
+            odom.pose.covariance[i * 7] = variance
+        for i, variance in enumerate((0.03**2, 0.02**2, 1.0, 1.0, 1.0, 0.1**2)):
+            odom.twist.covariance[i * 7] = variance
         self.odom_pub.publish(odom)
 
     def destroy_node(self):

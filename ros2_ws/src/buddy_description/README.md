@@ -11,7 +11,7 @@ ROS 2 Humble. This package holds the URDF, launch files, and Buddy's own nodes.
 | Part          | Detail                                                      |
 | ------------- | ----------------------------------------------------------- |
 | Compute       | Jetson Orin Nano                                            |
-| Base          | Differential drive, wheel separation **0.3302 m**, encoders |
+| Base          | Differential drive, wheel separation **0.381 m** (15-inch wheel centre spacing), encoders |
 | Motor control | ESP32 over **USB** @ 115200 — see `firmware/buddy_esp32`    |
 | Lidar         | YDLidar X4, laser-frame 0° faces forward (calibrated)       |
 | Camera        | Luxonis OAK-D (runs the detector NN on-device)              |

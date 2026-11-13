@@ -81,9 +81,35 @@ def scan_to_robot_frame(scan, yaw_offset, min_valid_range=0.0,
     return bearings[good], ranges[good]
 
 
+def count_in_sector(bearings, lo, hi):
+    """
+    How many returns fall in [lo, hi].
+
+    Coverage matters as much as distance: an EMPTY sector yields +inf from
+    min_range_in_sector, which reads as "infinitely clear" when it actually
+    means "no information". That fail-open reading has caused two collisions
+    on this robot - once at the front (min_valid_range rejecting close
+    returns) and once astern on 2026-11-12, where the neck pole occludes the
+    lidar and 68% of rays behind the robot return nothing at all, including a
+    20 deg wedge with zero returns. Callers that are about to move INTO a
+    sector should check this before trusting its distance.
+    """
+    if bearings.size == 0:
+        return 0
+    lo = float(wrap_angle(lo))
+    hi = float(wrap_angle(hi))
+    if lo <= hi:
+        mask = (bearings >= lo) & (bearings <= hi)
+    else:
+        mask = (bearings >= lo) | (bearings <= hi)
+    return int(np.count_nonzero(mask))
+
+
 def min_range_in_sector(bearings, ranges, lo, hi):
     """
     Closest return with bearing in [lo, hi], or +inf if the sector is empty.
+
+    +inf means "nothing seen", NOT "nothing there" - see count_in_sector.
 
     Handles sectors that straddle the +/-pi seam.
     """
@@ -105,22 +131,32 @@ def sector_distances(scan, yaw_offset,
                      side_span=DEFAULT_SIDE_SPAN,
                      min_valid_range=0.0,
                      self_mask_from_deg=165.0,
-                     self_mask_range=0.25):
+                     self_mask_range=0.25,
+                     with_counts=False):
     """
     Summarise a scan as the nearest obstacle in each sector around the robot.
 
     Returns a dict with keys front, left, right, rear - all metres, +inf when
     that sector saw nothing.
+
+    With with_counts=True, returns (distances, counts). A sector's distance is
+    only meaningful if its count is non-trivial: +inf from an EMPTY sector
+    means "blind", not "clear". See count_in_sector.
     """
     bearings, ranges = scan_to_robot_frame(
         scan, yaw_offset, min_valid_range, self_mask_from_deg, self_mask_range)
-    return {
-        'front': min_range_in_sector(bearings, ranges, -front_half, front_half),
-        'left': min_range_in_sector(bearings, ranges, front_half, front_half + side_span),
-        'right': min_range_in_sector(bearings, ranges, -(front_half + side_span), -front_half),
-        'rear': min_range_in_sector(bearings, ranges,
-                                    math.pi - side_span, -(math.pi - side_span)),
+    spans = {
+        'front': (-front_half, front_half),
+        'left': (front_half, front_half + side_span),
+        'right': (-(front_half + side_span), -front_half),
+        'rear': (math.pi - side_span, -(math.pi - side_span)),
     }
+    dists = {k: min_range_in_sector(bearings, ranges, lo, hi)
+             for k, (lo, hi) in spans.items()}
+    if not with_counts:
+        return dists
+    counts = {k: count_in_sector(bearings, lo, hi) for k, (lo, hi) in spans.items()}
+    return dists, counts
 
 
 def resolve_scan_yaw(node, base_frame, scan_frame, timeout_sec=5.0):

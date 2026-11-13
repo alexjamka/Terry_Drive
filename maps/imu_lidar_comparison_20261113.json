@@ -1,0 +1,18 @@
+{
+  "wheels": {
+    "processed_pose_count": 126,
+    "occupied_cells": 943,
+    "free_cells": 5841,
+    "explored_m2": 16.96000050544739,
+    "occupied_fraction": 0.13900353773584906
+  },
+  "imu": {
+    "processed_pose_count": 126,
+    "occupied_cells": 956,
+    "free_cells": 5616,
+    "explored_m2": 16.430000489652162,
+    "occupied_fraction": 0.14546561168594035
+  },
+  "recording": "/home/alex/buddy_imu_test_20261113/run2/bag",
+  "conclusion": "No demonstrated map-quality gain from IMU on this short rotation-only dataset; no loop-closure/whole-home claim."
+}

@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Verify the scan sector maths, especially the lidar mounting yaw."""
 import math
+import numpy as np
 import os
 import sys
 
@@ -110,5 +111,45 @@ for a, want in [(3 * math.pi, -math.pi), (-3 * math.pi, -math.pi), (0.5, 0.5)]:
     if not ok:
         fails.append(f"wrap {a}")
 
+# ---------------------------------------------------------------- coverage
+#
+# An empty sector must be distinguishable from a clear one. min_range_in_sector
+# returns +inf for both "nothing there" and "saw nothing", and +inf reads as
+# clear. Astern on this robot is structurally blind - the neck pole sits behind
+# the lidar and 68% of astern rays return nothing - and acting on that +inf
+# reversed the robot into a wall on 2026-11-12.
+print("\nsector coverage (blind != clear)")
+
+from buddy_scan_utils import count_in_sector  # noqa: E402
+
+scan = make_scan({0.0: 1.0, 10.0: 1.0, -10.0: 1.0})
+dists, counts = sector_distances(scan, 0.0, with_counts=True)
+
+ok = math.isinf(dists["rear"])
+print(f"  {'PASS' if ok else 'FAIL'}  unseen rear reports +inf  rear={dists['rear']}")
+if not ok:
+    fails.append("rear should be +inf when unseen")
+
+ok = counts["rear"] == 0
+print(f"  {'PASS' if ok else 'FAIL'}  unseen rear has ZERO coverage  n={counts['rear']}")
+if not ok:
+    fails.append("rear coverage should be 0 when unseen")
+
+ok = counts["front"] > 0
+print(f"  {'PASS' if ok else 'FAIL'}  front has coverage  n={counts['front']}")
+if not ok:
+    fails.append("front coverage should be non-zero")
+
+ok = count_in_sector(np.array([0.0, 0.2, -0.2]), -0.5, 0.5) == 3
+print(f"  {'PASS' if ok else 'FAIL'}  count_in_sector counts in-band bearings")
+if not ok:
+    fails.append("count_in_sector in-band")
+
+ok = count_in_sector(np.array([]), -0.5, 0.5) == 0
+print(f"  {'PASS' if ok else 'FAIL'}  count_in_sector handles an empty scan")
+if not ok:
+    fails.append("count_in_sector empty")
+
 print("\n" + ("ALL PASS" if not fails else f"FAILURES: {fails}"))
 sys.exit(1 if fails else 0)
+

@@ -20,7 +20,7 @@ slam_toolbox:
     # angular self-mask in buddy_scan_utils, so at 0.0 it maps that return
     # as a phantom obstacle that travels with the robot - corrupting both
     # the map and the scan matching that depends on it.
-    # max_laser_range matched to the X4's actual 10 m capability.
+    # Today's S2PRO recording contains valid returns to 8.07 m.
     min_laser_range: 0.20
     use_map_saver: true
     mode: mapping #localization
@@ -33,7 +33,8 @@ slam_toolbox:
     #map_start_at_dock: true
 
     debug_logging: false
-    throttle_scans: 2
+    # S2PRO supplies only ~3.7 Hz; keep every scan.
+    throttle_scans: 1
     transform_publish_period: 0.02 #if 0 never publishes odometry
     map_update_interval: 1.0
     resolution: 0.05
@@ -50,7 +51,11 @@ slam_toolbox:
     # General Parameters
     use_scan_matching: true
     use_scan_barycenter: true
-    minimum_travel_distance: 0.05
+    # Humble 2.6.10 has an outer translation-only gate before Karto.
+    # Zero permits in-place turns and also admits stationary scans.
+    # This trades graph growth for correct rotation updates at ~3.7 Hz.
+    # See CLAUDE.md for the measured scan-rejection failure and long-run caveat.
+    minimum_travel_distance: 0.0
     minimum_travel_heading: 0.1
     scan_buffer_size: 10
     scan_buffer_maximum_scan_distance: 10.0

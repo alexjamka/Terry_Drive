@@ -17,6 +17,7 @@ ament_target_dependencies(state_publisher rclcpp geometry_msgs sensor_msgs tf2_r
 install(TARGETS state_publisher DESTINATION lib/${PROJECT_NAME})
 
 install(PROGRAMS
+  scripts/buddy_imu.py                # raw IMU decoding + stationary gyro bias
   scripts/buddy_serial_bridge.py      # UART link to the ESP32 motor controller
   scripts/buddy_person_detector.py    # OAK-D + yolov6-nano -> Detection3DArray
   scripts/buddy_face_recognizer.py    # InsightFace embeddings -> named faces
@@ -26,6 +27,7 @@ install(PROGRAMS
   scripts/buddy_follow_controller.py  # target pose -> cmd_vel_raw
   scripts/buddy_scan_guard.py         # lidar safety: cmd_vel_raw -> cmd_vel
   scripts/buddy_wanderer.py           # random exploration -> cmd_vel_raw
+  scripts/buddy_teleop.py             # latching keyboard teleop -> cmd_vel_raw
   scripts/buddy_scan_utils.py         # shared scan helpers (imported)
   DESTINATION lib/${PROJECT_NAME}
 )

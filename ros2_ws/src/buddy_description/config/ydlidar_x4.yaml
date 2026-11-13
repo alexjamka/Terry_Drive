@@ -24,7 +24,32 @@ ydlidar_ros2_driver_node:
     # by-id collides and ttyUSB* ordering is not stable across reboots. This
     # by-path name is tied to the physical USB socket instead.
     # Re-derive after moving cables with:  ls -l /dev/serial/by-path/
-    port: /dev/serial/by-path/platform-3610000.usb-usb-0:1:1.0-port0
+    #
+    # This path has now changed three times. Identify the two CP2102s by what
+    # they SAY, not by position - the ESP32 answers 115200 with printable
+    # "E:<l>,<r>" frames, the lidar emits binary with a 0x55 ('U') sync byte:
+    #
+    #   python3 - <<'EOF'
+    #   import glob, time, serial
+    #   for p in sorted(glob.glob('/dev/serial/by-path/*')):
+    #       s = serial.Serial(); s.port = p; s.baudrate = 115200; s.timeout = .3
+    #       s.dtr = s.rts = False; s.open(); s.dtr = s.rts = False
+    #       time.sleep(1.8); s.reset_input_buffer()          # skip the boot log
+    #       raw = b''
+    #       end = time.time() + 3
+    #       while time.time() < end: raw += s.read(512)
+    #       s.close()
+    #       print(p, 'ESP32' if b'E:' in raw else 'LIDAR')
+    #   EOF
+    #
+    # Allow a full ~1.8 s settle before reading. A shorter one reads the ESP32
+    # mid-boot-log (74880 baud, garbage at 115200) and mis-identifies it as the
+    # lidar - that cost a wrong "ESP32 is dead" call on 2026-11-12.
+    #
+    # Mapping as of 2026-11-12 (OAK-D on USB-C, lidar and ESP32 on USB-A):
+    #   usb-0:2.2  ESP32
+    #   usb-0:2.3  lidar   <- the port set below
+    port: /dev/serial/by-path/platform-3610000.usb-usb-0:2.3:1.0-port0
     frame_id: laser
     ignore_array: ""
     baudrate: 128000
@@ -33,7 +58,9 @@ ydlidar_ros2_driver_node:
     sample_rate: 5            # MEASURED ~4950 samples/s. The device info packet
                               # claims 6.00K but that is not what arrives.
     abnormal_check_count: 4
-    fixed_resolution: false   # let real revolutions through, do not force a point count
+    # Karto requires a constant ray count/angle increment across scans.
+    # Variable native revolutions (1337-1341 rays) were being rejected.
+    fixed_resolution: true
     reversion: true
     inverted: true
     auto_reconnect: true

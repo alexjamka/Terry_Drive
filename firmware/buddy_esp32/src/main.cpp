@@ -1,4 +1,5 @@
 #include <Arduino.h>
+#include <Wire.h>
 
 #define ENA 25
 #define IN1 33
@@ -31,7 +32,9 @@
 #define INVERT_LEFT_ENCODER  true
 #define INVERT_RIGHT_ENCODER false
 
-#define WHEEL_SEPARATION 0.3302
+// Physical track: owner confirmed 15 inches centre-to-centre, 2026-11-13.
+// This command-kinematics value is distinct from effective ROS odometry width.
+#define WHEEL_SEPARATION 0.381
 #define MAX_PWM 250
 
 // Below MIN_PWM the geared motors stall and buzz instead of turning, so any
@@ -110,6 +113,71 @@ void drive(float left, float right) {
   ledcWrite(1, abs(rp));
 }
 
+// MPU-9250: SDA=21, SCL=22, AD0=GND (0x68). Sensor axes are
+// robot +X forward, +Y left, +Z up. Raw samples preserve the device clock;
+// the ROS bridge converts to SI and estimates gyro bias while stationary.
+constexpr uint8_t IMU_ADDR = 0x68;
+bool imuReady = false;
+unsigned long lastImuTime = 0;
+
+bool imuRead(uint8_t reg, uint8_t *data, size_t n) {
+  Wire.beginTransmission(IMU_ADDR);
+  Wire.write(reg);
+  if (Wire.endTransmission(false) != 0) return false;
+  if (Wire.requestFrom(IMU_ADDR, n) != n) return false;
+  for (size_t i = 0; i < n; ++i) data[i] = Wire.read();
+  return true;
+}
+
+bool imuWrite(uint8_t reg, uint8_t value) {
+  Wire.beginTransmission(IMU_ADDR);
+  Wire.write(reg); Wire.write(value);
+  return Wire.endTransmission() == 0;
+}
+
+void initImu() {
+  Wire.begin(21, 22, 400000);
+  Wire.setTimeOut(10);  // disconnected IMU must not block motor watchdog
+  uint8_t who = 0;
+  if (!imuRead(0x75, &who, 1)) {
+    Serial.println("IMU:NOT_FOUND at 0x68");
+    return;
+  }
+  Serial.print("IMU:WHO_AM_I=0x"); Serial.println(who, HEX);
+  // MPU-9250 / 9255 / 6500 share this accel/gyro register layout.
+  // A 6500 identity does not establish that a magnetometer is present.
+  if (who != 0x71 && who != 0x73 && who != 0x70) {
+    Serial.println("IMU:UNSUPPORTED identity");
+    return;
+  }
+  if (!imuWrite(0x6B, 0x80)) return;  // reset
+  delay(100);
+  imuReady = imuWrite(0x6B, 0x01) &&  // PLL, awake
+             imuWrite(0x6C, 0x00) &&  // all accel/gyro axes enabled
+             imuWrite(0x1A, 0x03) &&  // gyro DLPF: 41 Hz
+             imuWrite(0x19, 19) &&    // 1 kHz / 20 = 50 Hz
+             imuWrite(0x1B, 0x00) &&  // gyro +/-250 deg/s, 131 LSB/(deg/s)
+             imuWrite(0x1C, 0x00) &&  // accel +/-2 g, 16384 LSB/g
+             imuWrite(0x1D, 0x03);    // accel DLPF: 41 Hz
+  Serial.println(imuReady ? "IMU:READY 50Hz" : "IMU:CONFIG_FAILED");
+}
+
+void publishImu() {
+  if (!imuReady || millis() - lastImuTime < 5) return;
+  lastImuTime = millis();
+  uint8_t status = 0, data[14];
+  if (!imuRead(0x3A, &status, 1) || !(status & 1)) return;
+  if (!imuRead(0x3B, data, sizeof(data))) return;
+  const uint32_t stamp = micros();
+  // Skip the temperature word at byte 6. USB only: the ROS host uses USB.
+  Serial.print("I:"); Serial.print(stamp);
+  for (int offset : {0, 2, 4, 8, 10, 12}) {
+    int16_t value = (int16_t)((uint16_t(data[offset]) << 8) | data[offset + 1]);
+    Serial.print(','); Serial.print(value);
+  }
+  Serial.println();
+}
+
 void setup() {
   Serial.begin(115200);
   Serial2.begin(115200, SERIAL_8N1, 16, 17);
@@ -124,6 +192,8 @@ void setup() {
   attachInterrupt(digitalPinToInterrupt(ENC_LA), leftISR, RISING);
   attachInterrupt(digitalPinToInterrupt(ENC_RA), rightISR, RISING);
 
+  drive(0, 0);
+  initImu();
   Serial.println("Ready");
 }
 
@@ -166,6 +236,8 @@ void loop() {
   }
 
   drive(leftVel, rightVel);
+
+  publishImu();
 
   // Publish encoders at 20Hz
   if (millis() - lastPubTime >= 50) {

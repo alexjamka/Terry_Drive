@@ -47,10 +47,48 @@ class ScanGuard(Node):
         self.declare_parameter('front_half_angle_deg', 35.0)
         self.declare_parameter('side_span_deg', 55.0)
         self.declare_parameter('max_linear', 0.30)
-        # Must not clip the behaviours' turn commands: buddy_wanderer turns at
-        # 1.2 rad/s so each wheel clears the 0.18 m/s break-away. A 1.0 clamp
-        # here silently throttled that to 1.0.
-        self.declare_parameter('max_angular', 1.5)
+        # Must not clip the behaviours' turn commands. Measured 2026-11-11 by
+        # sweeping commanded speed against /odom distance:
+        #
+        #   cmd 0.20 m/s (PWM 166) -> 43% achieved   (stalls intermittently)
+        #   cmd 0.25 m/s (PWM 208) -> 100%
+        #   cmd 0.30 m/s (PWM 249) -> 144%
+        #
+        # PWM 249 really produces ~0.43 m/s, so the firmware's v*833 scale is
+        # wrong (true constant ~581) and MIN_PWM 150 is a real floor of
+        # 0.26 m/s, not the 0.18 m/s previously documented. The slowest
+        # non-stalling in-place turn is therefore 2*0.26/0.3302 = 1.57 rad/s.
+        # A 1.5 clamp sat just under that, so every turn the wanderer asked
+        # for was throttled into the stall zone. Must stay above 1.57.
+        self.declare_parameter('max_angular', 2.0)
+        # The base is effectively bang-bang: MIN_PWM 150 floors every nonzero
+        # command, and under real load on the floor PWM 150 does NOT reliably
+        # break away (the "149 = both wheels turn" bench figure was measured
+        # with the wheels ELEVATED). So a scaled-down forward command is not a
+        # slow robot, it is a juddering one.
+        #
+        # Measured on the 185 s mapping run of 2026-11-12: front clearance sat
+        # between 0.35 and 0.75 m for the whole run, so the proportional zone
+        # below scaled 0.28 m/s to ~0.1 m/s on 2566 of 3700 ticks. front_blocked
+        # fired ZERO times - the robot was never stopped by the guard, just
+        # throttled into stalling. It covered 4.65 m of wheel travel in 185 s
+        # (0.99 m net) and the SLAM map stopped growing after 24 s.
+        #
+        # Fix: scale as before, but never emit a nonzero speed below what the
+        # drivetrain can actually sustain. Either it moves or it stops.
+        # Closing the velocity loop (PI) is what would buy back a real slow
+        # zone; until then this keeps the guard honest.
+        self.declare_parameter('min_linear', 0.26)
+        # Minimum returns required in the rear sector before reverse is
+        # trusted. An empty sector reports +inf, which reads as "clear" but
+        # means "blind" - and astern is structurally blind on this robot: the
+        # neck pole sits ~0.29 m behind the lidar, and a scan taken 2026-11-12
+        # had 68% of astern rays returning nothing, with a 20 deg wedge at
+        # zero returns. The robot was reversed into a wall that the guard was
+        # reporting as 0.98 m clear. Rotation is never blocked, so refusing to
+        # reverse blind costs nothing: the robot can always turn and drive out
+        # forwards, where the lidar can actually see.
+        self.declare_parameter('min_rear_points', 8)
         self.declare_parameter('cmd_timeout', 0.5)
         self.declare_parameter('scan_timeout', 1.0)
         self.declare_parameter('publish_rate', 20.0)
@@ -75,6 +113,8 @@ class ScanGuard(Node):
         self.side_span = math.radians(g('side_span_deg'))
         self.max_linear = g('max_linear')
         self.max_angular = g('max_angular')
+        self.min_linear = g('min_linear')
+        self.min_rear_points = g('min_rear_points')
         self.cmd_timeout = g('cmd_timeout')
         self.scan_timeout = g('scan_timeout')
         self.base_frame = g('base_frame')
@@ -95,6 +135,7 @@ class ScanGuard(Node):
         self._last_cmd = Twist()
         self._last_cmd_time = None
         self._sectors = None
+        self._counts = {}
         self._last_scan_time = None
 
         # resolve_scan_yaw() below spins the node while waiting for TF, which
@@ -133,10 +174,10 @@ class ScanGuard(Node):
     def _on_scan(self, msg: LaserScan):
         if self.scan_yaw is None:
             return  # mounting yaw not resolved yet; see __init__
-        self._sectors = sector_distances(
+        self._sectors, self._counts = sector_distances(
             msg, self.scan_yaw, self.front_half, self.side_span,
             self.min_valid_range, self.self_mask_from_deg,
-            self.self_mask_range)
+            self.self_mask_range, with_counts=True)
         self._last_scan_time = self.get_clock().now()
 
     def _on_cmd(self, msg: Twist):
@@ -165,12 +206,10 @@ class ScanGuard(Node):
             lin = max(-self.max_linear, min(self.max_linear, self._last_cmd.linear.x))
             ang = max(-self.max_angular, min(self.max_angular, self._last_cmd.angular.z))
 
-            # NOTE: with the firmware's MIN_PWM floor at 150 (= break-away),
-            # any linear command below ~0.18 m/s is floored back up, so the
-            # proportional slow zone below cannot actually slow the base - it
-            # behaves as go-or-stop. Kept because stop_distance is the real
-            # safety line, and the wanderer turns at 0.70 m before this
-            # engages. Closing the velocity loop would make slowing effective.
+            # See min_linear above: scaling below the achievable floor makes
+            # the base judder instead of slow, so the scaled command is lifted
+            # back to min_linear rather than handed over as an unachievable
+            # fraction. stop_distance remains the real safety line.
             if lin > 0.0:
                 front = s['front']
                 if front <= self.stop_distance:
@@ -179,11 +218,27 @@ class ScanGuard(Node):
                 elif front < self.slow_distance:
                     span = self.slow_distance - self.stop_distance
                     scale = (front - self.stop_distance) / span if span > 0 else 0.0
+                    lin_req = lin
                     lin *= max(0.0, min(1.0, scale))
-                    reason = 'slowing'
-            elif lin < 0.0 and s['rear'] <= self.rear_stop_distance:
-                lin = 0.0
-                reason = 'rear_blocked'
+                    if 0.0 < lin < self.min_linear:
+                        # Never hand down a speed the base cannot sustain - but
+                        # never hand UP more than was asked for either, or the
+                        # governor would accelerate the robot it is protecting.
+                        # If the request itself is under the floor it simply
+                        # cannot be slowed, and passes through unchanged.
+                        lin = min(self.min_linear, lin_req)
+                        reason = 'slow_floor'
+                    else:
+                        reason = 'slowing'
+            elif lin < 0.0:
+                # Coverage BEFORE distance: see min_rear_points. Reversing on
+                # the strength of an empty sector is how the robot hit a wall.
+                if self._counts.get('rear', 0) < self.min_rear_points:
+                    lin = 0.0
+                    reason = 'rear_unknown'
+                elif s['rear'] <= self.rear_stop_distance:
+                    lin = 0.0
+                    reason = 'rear_blocked'
 
             out.linear.x = lin
             out.angular.z = ang
@@ -198,6 +253,7 @@ class ScanGuard(Node):
                        'ang': round(self._last_cmd.angular.z, 3)},
             'sectors': {k: (None if math.isinf(v) else round(v, 2))
                         for k, v in s.items()},
+            'points': dict(self._counts),
             'scan_age': round(scan_age, 2) if math.isfinite(scan_age) else None,
         })))
 

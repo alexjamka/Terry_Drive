@@ -1,0 +1,38 @@
+# OAK-D-LITE configuration for RGB-D SLAM.
+#
+# Measured 2026-11-12 on the actual device:
+#   name        OAK-D-LITE-FF
+#   cameras     CAM_A IMX214 (colour), CAM_B/CAM_C OV7251 (stereo pair)
+#   IMU         BMI270, firmware 1.0.0, confirmed streaming
+#
+# Why this exists: the YDLidar S2PRO on this robot returns NOTHING beyond
+# 2.51 m (79,305 samples, 20 s, zero returns past 3 m in a ~10 m room). It is
+# specced at 8 m. Mapping a home through a 2.5 m window is what kept breaking
+# loop closure - loop_search_maximum_distance was 3.0 m, further than the
+# sensor can physically see. The OAK-D measured 0.35 m out to several metres
+# on the same spot, so it is the better mapping sensor here. The lidar stays
+# on for the safety guard, where 0.35-2.5 m is all that is needed.
+/oak:
+  ros__parameters:
+    camera:
+      i_pipeline_type: RGBD
+      i_nn_type: none
+      i_enable_imu: true
+      # Attach the camera's own TF tree to the robot's, rather than letting it
+      # publish a free-floating 'oak-d-base-frame'. BuddyCameraMount_link is
+      # positioned by the URDF at 0.8636 m (34") above the floor.
+      i_publish_tf_from_calibration: true
+      i_tf_tf_prefix: oak
+      i_tf_base_frame: oak
+      i_tf_parent_frame: BuddyCameraMount_link
+    rgb:
+      # 720P is plenty for SLAM features and keeps the Orin Nano cool. The
+      # IMX214 can do 4K; there is no benefit here and a real cost.
+      i_resolution: '720P'
+      i_fps: 15.0
+    stereo:
+      # Depth MUST be registered to the colour frame or rtabmap pairs each
+      # colour pixel with the wrong depth.
+      i_align_depth: true
+      i_subpixel: true
+      i_fps: 15.0

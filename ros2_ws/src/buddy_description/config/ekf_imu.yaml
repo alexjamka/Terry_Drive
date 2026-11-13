@@ -1,0 +1,30 @@
+# Lidar SLAM reads odom->BuddyBaseFootprint_link from this EKF.
+# Bias is removed in buddy_serial_bridge, not estimated by robot_localization.
+# Acceleration is deliberately excluded (gravity, tilt and lever-arm motion).
+ekf_filter_node:
+  ros__parameters:
+    frequency: 50.0
+    sensor_timeout: 0.2
+    two_d_mode: true
+    publish_tf: true
+    print_diagnostics: true
+    transform_time_offset: 0.0
+    transform_timeout: 0.05
+    map_frame: map
+    odom_frame: odom
+    base_link_frame: BuddyBaseFootprint_link
+    world_frame: odom
+    odom0: /odom/wheel
+    # x y z | roll pitch yaw | vx vy vz | vroll vpitch vyaw | ax ay az
+    odom0_config: [false, false, false, false, false, false,
+                   true, true, false, false, false, true,
+                   false, false, false]
+    odom0_queue_size: 10
+    odom0_differential: false
+    imu0: /imu/data
+    imu0_config: [false, false, false, false, false, false,
+                  false, false, false, false, false, true,
+                  false, false, false]
+    imu0_queue_size: 20
+    imu0_differential: false
+    imu0_remove_gravitational_acceleration: false

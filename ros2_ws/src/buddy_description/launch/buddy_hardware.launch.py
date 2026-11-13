@@ -35,6 +35,7 @@ def generate_launch_description():
     #
     mode = LaunchConfiguration('mode')
     use_slam = LaunchConfiguration('use_slam')
+    use_imu = LaunchConfiguration('use_imu')
 
     is_wander = IfCondition(PythonExpression(["'", mode, "' == 'wander'"]))
     is_follow = IfCondition(PythonExpression(["'", mode, "' == 'follow'"]))
@@ -54,6 +55,9 @@ def generate_launch_description():
             'use_slam', default_value='true',
             choices=['true', 'false'],
             description='Run slam_toolbox. Required for mode:=nav2.'),
+        DeclareLaunchArgument(
+            'use_imu', default_value='false', choices=['true', 'false'],
+            description='Fuse calibrated ESP IMU with wheels for lidar odometry.'),
     ]
 
     # ------------------------------------------------------------ always-on
@@ -67,7 +71,19 @@ def generate_launch_description():
     serial_bridge = Node(
         package='buddy_description',
         executable='buddy_serial_bridge.py',
+        parameters=[{
+            'publish_tf': PythonExpression(["'", use_imu, "' != 'true'"]),
+            'odom_topic': PythonExpression([
+                "'/odom/wheel' if '", use_imu, "' == 'true' else '/odom'"]),
+        }],
         output='screen',
+    )
+
+    imu_ekf = Node(
+        package='robot_localization', executable='ekf_node', name='ekf_filter_node',
+        parameters=[os.path.join(pkg, 'config', 'ekf_imu.yaml')],
+        remappings=[('odometry/filtered', '/odom')],
+        condition=IfCondition(use_imu), output='screen',
     )
 
     lidar_node = IncludeLaunchDescription(
@@ -179,6 +195,7 @@ def generate_launch_description():
     return LaunchDescription(args + [
         robot_state_publisher,
         serial_bridge,
+        imu_ekf,
         lidar_node,
         laser_tf,
         oakd_tf,

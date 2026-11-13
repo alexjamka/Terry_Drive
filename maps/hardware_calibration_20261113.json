@@ -1,0 +1,23 @@
+{
+  "outcome": "route_completed",
+  "path_m": 2.6661661161130756,
+  "gyro_yaw_deg": 465.66917715829777,
+  "counts": {
+    "/imu/data_raw": 3583,
+    "/imu/data": 3583,
+    "/tf": 4872,
+    "/odom": 1434,
+    "/cmd_vel": 1433,
+    "/scan_guard_status": 1433,
+    "/scan": 260,
+    "/tf_static": 3,
+    "/map": 70
+  },
+  "map_metrics": {
+    "occupied": 1440,
+    "free": 4816,
+    "explored_m2": 15.640000466108326,
+    "occupied_fraction": 0.23017902813299232
+  },
+  "loop_closures": 0
+}
