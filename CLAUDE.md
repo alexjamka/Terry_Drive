@@ -668,6 +668,92 @@ healthy robot. The gyro settled it (odom +92.5 vs gyro +94.3 deg; -92.3 vs
 separately, and reads `WHEEL_SEPARATION` from the bridge source so it cannot
 print a stale number. **When two sensors disagree about a sign, add a third.**
 
+## Overhead obstacle detection from the OAK-D — 2026-11-13 (built)
+
+The lidar is ONE horizontal slice at 0.406 m and the robot is ~0.9 m tall, so a
+desk top above that slice is invisible to it - the robot drove into exactly that.
+`buddy_depth_obstacles.py` closes the gap.
+
+**Camera re-measured: 32" (0.8128 m) above the floor**, was 34". URDF joint
+`CameraMount_to_neck` is now `xyz="0 0 0.53105"`; live TF reads
+`[-0.102, 0.000, 0.813]` with rotation `(-90, 0, -90) deg`.
+
+### How it works
+
+Projects each depth pixel into the robot frame, keeps points inside a height
+band that would actually collide, and reduces them to a nearest obstacle per
+bearing. Publishes `/scan_camera` **in the BASE frame**, so each range is the
+horizontal distance from the robot's own origin and `buddy_scan_guard` applies
+the same sector maths as the lidar with no mounting yaw.
+
+The guard takes **whichever sensor sees an obstacle nearer**, and reports
+`front_blocked_camera` when the camera is the one that stopped it. Only the
+FRONT sector is taken from the camera - its field of view is ~72 deg, so it must
+never be allowed to imply the sides or rear are clear.
+
+    ros2 launch buddy_description buddy_hardware.launch.py \
+        mode:=teleop use_slam:=true use_camera:=true
+
+`use_camera` defaults **false** (it needs the OAK-D plugged in and costs CPU),
+and it also sets the guard's own `use_camera`, so with the camera off the guard
+does not subscribe or warn.
+
+### Verified on hardware
+
+Projected points by height, with the robot facing a wall:
+
+| band | points | nearest |
+| ---- | ------ | ------- |
+| 0.00-0.10 m (floor) | **0** | - |
+| 0.10-0.35 m, lidar blind | 176 | 1.07 m |
+| 0.35-0.46 m, the lidar's own plane | 832 | 0.87 m |
+| **0.46-0.95 m, lidar blind** | **5428** | **0.83 m** |
+| above 0.95 m, ignored | 3361 | 1.06 m |
+
+Zero floor leakage, agreement with the lidar at its own plane, and the overhang
+band is the largest contributor. Cross-checked against the lidar in the
+overlapping front sector at +/-10/20/30 deg: agreement within **0.03-0.04 m**,
+with the camera reading slightly FARTHER - floor leakage would read nearer, so
+that rules it out. Runs at ~4.4 Hz using ~10k decimated pixels.
+
+### Near-field speckle nearly froze the robot
+
+With `min_depth` at 0.30 m, **13 of 67 scans reported an obstacle under 0.40 m
+while the lidar saw 0.66 m**, and the bearing of the nearest return wandered
+across the whole field of view - speckle, not structure. Any one of those would
+have tripped the 0.35 m stop line and frozen the robot in an empty room. Fixed
+two ways:
+
+  * `min_depth` 0.30 -> **0.45 m**. Closer than that is the LIDAR's job.
+  * **Temporal persistence**: a bin is reported only if occupied in 2 of the
+    last 3 scans, and its range is the median of those.
+
+After: **0 of 121 scans under 0.40 m**, spread tightened from std 0.19 to 0.066.
+
+### Limits that must not be forgotten
+
+  * ~72 deg field of view, not 360. A COMPLEMENT to the lidar, never a
+    replacement.
+  * Cannot see nearer than 0.45 m. `stop_distance` must stay inside what the
+    lidar can see.
+  * Obstacles under ~0.10 m are invisible to BOTH sensors. `min_height` is a
+    floor-rejection threshold, and lowering it risks a floor misread as an
+    obstacle, which would stop the robot dead in an empty room.
+  * Persistence costs ~0.6 s of latency, about 17 cm at cruise.
+  * `require_camera` defaults FALSE: a camera dropout logs a throttled warning
+    and reports `camera_stale`, but does not stop the robot, because the lidar
+    still guards the stop line. The cost is that with the camera down the robot
+    is blind to desks again. Set it true for unsupervised runs near overhanging
+    furniture.
+
+### A trap worth repeating
+
+A test suite failure after this work looked like a code bug - the wanderer
+integration test reported zero commands. The cause was **leaked nodes from
+manual debugging in domain 91**, which is the suite's own default domain. The
+runner's comments warn about exactly this. Before believing a test failure,
+check `pgrep` for stray `buddy_*` nodes.
+
 ## Working with the owner
 
 Mechanical engineering student (CU Boulder, controls/robotics) targeting Bay Area

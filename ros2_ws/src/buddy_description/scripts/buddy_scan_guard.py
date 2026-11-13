@@ -89,6 +89,27 @@ class ScanGuard(Node):
         # reverse blind costs nothing: the robot can always turn and drive out
         # forwards, where the lidar can actually see.
         self.declare_parameter('min_rear_points', 8)
+        # OAK-D depth obstacles, covering the heights the lidar cannot see.
+        # The lidar is a single slice at 0.406 m; the robot is ~0.9 m tall and
+        # on 2026-11-13 it drove into a desk whose top was above that slice
+        # while this guard reported the way ahead clear. buddy_depth_obstacles
+        # publishes /scan_camera already in the BASE frame, so it needs no
+        # mounting yaw and no self-mask.
+        self.declare_parameter('use_camera', True)
+        self.declare_parameter('camera_scan_topic', '/scan_camera')
+        self.declare_parameter('camera_min_points', 3)
+        self.declare_parameter('camera_timeout', 1.5)
+        # If the camera drops out, should the robot stop?
+        #
+        # Default FALSE, deliberately. The camera is an ADDITION to the lidar,
+        # not the primary safety sensor: it only covers ~72 deg ahead and
+        # cannot see closer than ~0.30 m, so the lidar still guards the stop
+        # line. Failing closed on every camera hiccup would make the robot
+        # undriveable. The cost of this choice is real - with the camera down
+        # the robot is blind to desks again - so the status topic reports
+        # camera_stale and a throttled warning is logged. Set true for
+        # unsupervised runs around overhanging furniture.
+        self.declare_parameter('require_camera', False)
         self.declare_parameter('cmd_timeout', 0.5)
         self.declare_parameter('scan_timeout', 1.0)
         self.declare_parameter('publish_rate', 20.0)
@@ -115,6 +136,10 @@ class ScanGuard(Node):
         self.max_angular = g('max_angular')
         self.min_linear = g('min_linear')
         self.min_rear_points = g('min_rear_points')
+        self.use_camera = g('use_camera')
+        self.camera_min_points = g('camera_min_points')
+        self.camera_timeout = g('camera_timeout')
+        self.require_camera = g('require_camera')
         self.cmd_timeout = g('cmd_timeout')
         self.scan_timeout = g('scan_timeout')
         self.base_frame = g('base_frame')
@@ -137,6 +162,9 @@ class ScanGuard(Node):
         self._sectors = None
         self._counts = {}
         self._last_scan_time = None
+        self._cam_front = math.inf
+        self._cam_points = 0
+        self._last_cam_time = None
 
         # resolve_scan_yaw() below spins the node while waiting for TF, which
         # can dispatch _on_scan before scan_yaw is assigned. Define it first
@@ -149,6 +177,10 @@ class ScanGuard(Node):
         # delivers nothing - the guard just reports no_scan forever.
         self.create_subscription(
             LaserScan, '/scan', self._on_scan, qos_profile_sensor_data)
+        if self.use_camera:
+            self.create_subscription(
+                LaserScan, g('camera_scan_topic'), self._on_camera_scan,
+                qos_profile_sensor_data)
         self.create_subscription(Twist, '/cmd_vel_raw', self._on_cmd, 10)
         self.cmd_pub = self.create_publisher(Twist, '/cmd_vel', 10)
         self.status_pub = self.create_publisher(String, '/scan_guard_status', 10)
@@ -180,6 +212,23 @@ class ScanGuard(Node):
             self.self_mask_range, with_counts=True)
         self._last_scan_time = self.get_clock().now()
 
+    def _on_camera_scan(self, msg: LaserScan):
+        """
+        Nearest in-band obstacle ahead, from the depth camera.
+
+        /scan_camera is already in the base frame, so yaw offset is zero and no
+        self-mask applies. Only the FRONT sector is taken: the camera's field of
+        view is ~72 deg, so it has nothing useful to say about the sides or rear
+        and must not be allowed to imply they are clear.
+        """
+        dists, counts = sector_distances(
+            msg, 0.0, self.front_half, self.side_span,
+            min_valid_range=0.0, self_mask_from_deg=180.0, self_mask_range=0.0,
+            with_counts=True)
+        self._cam_front = dists['front']
+        self._cam_points = counts['front']
+        self._last_cam_time = self.get_clock().now()
+
     def _on_cmd(self, msg: Twist):
         self._last_cmd = msg
         self._last_cmd_time = self.get_clock().now()
@@ -201,7 +250,20 @@ class ScanGuard(Node):
         elif scan_age > self.scan_timeout or self._sectors is None:
             # No eyes: refuse to move rather than drive blind.
             reason = 'no_scan'
+        elif (self.use_camera and self.require_camera
+                and self._age(self._last_cam_time) > self.camera_timeout):
+            # Opt-in fail-closed: see require_camera. Without the camera the
+            # robot cannot see overhanging obstacles at all.
+            reason = 'camera_stale'
         else:
+            cam_age = self._age(self._last_cam_time)
+            cam_ok = (self.use_camera
+                      and self._cam_points >= self.camera_min_points
+                      and cam_age <= self.camera_timeout)
+            if self.use_camera and cam_age > self.camera_timeout:
+                self.get_logger().warn(
+                    'camera obstacle scan is stale; overhead obstacles such as '
+                    'desk tops are NOT being seen', throttle_duration_sec=10.0)
             s = self._sectors
             lin = max(-self.max_linear, min(self.max_linear, self._last_cmd.linear.x))
             ang = max(-self.max_angular, min(self.max_angular, self._last_cmd.angular.z))
@@ -211,10 +273,18 @@ class ScanGuard(Node):
             # back to min_linear rather than handed over as an unachievable
             # fraction. stop_distance remains the real safety line.
             if lin > 0.0:
+                # Take the NEARER of the two sensors. The lidar sees 360 deg at
+                # one height; the camera sees one height band ahead. Something
+                # only one of them can see is still something to stop for.
                 front = s['front']
+                front_src = 'lidar'
+                if self.use_camera and cam_ok and self._cam_front < front:
+                    front = self._cam_front
+                    front_src = 'camera'
                 if front <= self.stop_distance:
                     lin = 0.0
-                    reason = 'front_blocked'
+                    reason = ('front_blocked_camera' if front_src == 'camera'
+                              else 'front_blocked')
                 elif front < self.slow_distance:
                     span = self.slow_distance - self.stop_distance
                     scale = (front - self.stop_distance) / span if span > 0 else 0.0
@@ -254,6 +324,13 @@ class ScanGuard(Node):
             'sectors': {k: (None if math.isinf(v) else round(v, 2))
                         for k, v in s.items()},
             'points': dict(self._counts),
+            'camera': {
+                'front': (None if math.isinf(self._cam_front)
+                          else round(self._cam_front, 2)),
+                'points': self._cam_points,
+                'age': (None if self._last_cam_time is None
+                        else round(self._age(self._last_cam_time), 2)),
+            } if self.use_camera else None,
             'scan_age': round(scan_age, 2) if math.isfinite(scan_age) else None,
         })))
 

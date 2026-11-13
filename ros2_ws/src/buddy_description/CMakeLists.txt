@@ -26,6 +26,7 @@ install(PROGRAMS
   scripts/buddy_target_tracker.py     # picks + tracks the follow target
   scripts/buddy_follow_controller.py  # target pose -> cmd_vel_raw
   scripts/buddy_scan_guard.py         # lidar safety: cmd_vel_raw -> cmd_vel
+  scripts/buddy_depth_obstacles.py    # OAK-D depth -> /scan_camera (heights the lidar misses)
   scripts/buddy_wanderer.py           # random exploration -> cmd_vel_raw
   scripts/buddy_teleop.py             # latching keyboard teleop -> cmd_vel_raw
   scripts/buddy_scan_utils.py         # shared scan helpers (imported)

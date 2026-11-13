@@ -35,6 +35,7 @@ def generate_launch_description():
     #
     mode = LaunchConfiguration('mode')
     use_slam = LaunchConfiguration('use_slam')
+    use_camera = LaunchConfiguration('use_camera')
     use_imu = LaunchConfiguration('use_imu')
 
     is_wander = IfCondition(PythonExpression(["'", mode, "' == 'wander'"]))
@@ -55,6 +56,10 @@ def generate_launch_description():
             'use_slam', default_value='true',
             choices=['true', 'false'],
             description='Run slam_toolbox. Required for mode:=nav2.'),
+        DeclareLaunchArgument(
+            'use_camera', default_value='false', choices=['true', 'false'],
+            description='Run the OAK-D and feed /scan_camera to the guard, so '
+                        'obstacles above and below the lidar plane are seen.'),
         DeclareLaunchArgument(
             'use_imu', default_value='false', choices=['true', 'false'],
             description='Fuse calibrated ESP IMU with wheels for lidar odometry.'),
@@ -132,6 +137,36 @@ def generate_launch_description():
     scan_guard = Node(
         package='buddy_description', executable='buddy_scan_guard.py',
         output='screen', condition=is_reactive,
+        # Only look for /scan_camera when the camera is actually running;
+        # otherwise the guard warns about a stale camera scan forever.
+        parameters=[{'use_camera': PythonExpression(
+            ["'", use_camera, "' == 'true'"])}],
+    )
+
+    # ------------------------------------------- overhead obstacle detection
+    #
+    # The lidar is ONE horizontal slice at 0.406 m and the robot is ~0.9 m
+    # tall, so a desk top above that slice is invisible to it - the robot drove
+    # into exactly that on 2026-11-13. These two turn the OAK-D depth image
+    # into /scan_camera, which buddy_scan_guard merges with /scan by taking
+    # whichever sees an obstacle nearer.
+    #
+    # Off by default: it needs the OAK-D plugged in, and costs CPU. Turn it on
+    # with use_camera:=true whenever driving near overhanging furniture.
+    oakd_camera = IncludeLaunchDescription(
+        PythonLaunchDescriptionSource(
+            os.path.join(get_package_share_directory('depthai_ros_driver'),
+                         'launch', 'camera.launch.py')),
+        launch_arguments={
+            'name': 'oak',
+            'params_file': os.path.join(pkg, 'config', 'oakd_rtabmap.yaml'),
+        }.items(),
+        condition=IfCondition(use_camera),
+    )
+
+    depth_obstacles = Node(
+        package='buddy_description', executable='buddy_depth_obstacles.py',
+        output='screen', condition=IfCondition(use_camera),
     )
 
     wanderer = Node(
@@ -201,6 +236,8 @@ def generate_launch_description():
         oakd_tf,
         foxglove_bridge,
         scan_guard,
+        oakd_camera,
+        depth_obstacles,
         wanderer,
         person_detector,
         face_recognizer,

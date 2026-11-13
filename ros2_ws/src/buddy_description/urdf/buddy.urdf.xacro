@@ -111,12 +111,12 @@
          BuddyNeck_link sits at BuddyBase_link + (0, 0, 0.15), and
          BuddyBase_link sits at BuddyBaseFootprint_link + (-0.1016, 0, 0.13175),
          so this origin resolves to a camera height of
-             0.13175 + 0.15 + 0.58185 = 0.8636 m
+             0.13175 + 0.15 + 0.53105 = 0.8128 m
          above the floor. Verify after any change with:
              ros2 run tf2_ros tf2_echo BuddyBaseFootprint_link oak_d_link
          Was (-0.1600, 0, 0.6128), which put the camera at 0.8946 m (35.2") and
          0.26 m behind the drive axle - both wrong for the fitted hardware. -->
-    <origin xyz="0 0 0.58185"/>
+    <origin xyz="0 0 0.53105"/>
   </joint>
 
   <link name="LidarMount_link">
