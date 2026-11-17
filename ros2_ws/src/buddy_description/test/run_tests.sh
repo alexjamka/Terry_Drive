@@ -46,6 +46,9 @@ run_integration() {
 echo "=== unit: scan sector maths ==="
 python3 "$HERE/test_scan_utils.py" || rc=1
 
+echo; echo "=== unit: voice intents + dialogue ==="
+python3 "$HERE/test_voice.py" || rc=1
+
 echo "=== unit: IMU protocol/calibration ==="
 python3 "$HERE/test_imu.py" || rc=1
 

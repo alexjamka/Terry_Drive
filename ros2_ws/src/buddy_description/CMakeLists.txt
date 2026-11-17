@@ -29,6 +29,9 @@ install(PROGRAMS
   scripts/buddy_depth_obstacles.py    # OAK-D depth -> /scan_camera (heights the lidar misses)
   scripts/buddy_wanderer.py           # random exploration -> cmd_vel_raw
   scripts/buddy_teleop.py             # latching keyboard teleop -> cmd_vel_raw
+  scripts/buddy_intents.py            # transcript -> intent (local, never cloud)
+  scripts/buddy_dialogue.py           # conversation state machine (pure logic)
+  scripts/buddy_voice_backend.py      # swappable speak/transcribe/chat
   scripts/buddy_scan_utils.py         # shared scan helpers (imported)
   DESTINATION lib/${PROJECT_NAME}
 )

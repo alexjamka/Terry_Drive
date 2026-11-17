@@ -896,6 +896,91 @@ separate speaker and fiddly AEC reference routing.
    `buddy_face_recognizer.py`, which already publishes `/buddy_say`.
 4. Verify a 1.5B model headless; try Kokoro on the GPU with the IDE closed.
 
+## Conversation layer — intents, dialogue, swappable backend (2026-11-16)
+
+Goal behaviour: while roaming, Buddy sees a face it does not recognise, greets
+them unprompted, asks their name, confirms it and remembers it. **No wake word -
+VISION starts the conversation.** That matters for latency: the robot speaks
+first and chooses when, so the greeting is never a race.
+
+```
+scripts/buddy_intents.py        transcript -> intent      (pure, no deps)
+scripts/buddy_dialogue.py       state machine             (pure, no ROS/audio)
+scripts/buddy_voice_backend.py  speak / transcribe / chat (local or cloud)
+test/test_voice.py              46 checks, no hardware
+```
+
+### Commands never touch the network, deliberately
+
+`buddy_intents.py` is regex matching, NOT an LLM, for three reasons:
+
+  * **Safety.** "stop" must work when wifi is down or the model is loading.
+  * **Speed.** Microseconds against a cloud round trip.
+  * **It cannot hallucinate.** An LLM asked to extract a name will occasionally
+    invent one, and this robot WRITES that name into `face_db/`.
+
+Stop is matched loosely and checked FIRST in every state: a false positive
+stops a slow robot, which is harmless; a false negative does not stop it when
+asked, which is not.
+
+Names are rejected as well as extracted. `"i'm fine"`, `"i'm good"`,
+`"i'm just looking"` are all refused, because enrolling a face as "Fine" is
+hard to undo and the robot then greets that person wrongly forever. A miss is
+better than a bad guess - the dialogue simply asks again.
+
+### A name is only written after explicit confirmation
+
+    face_seen(unknown) -> ASK_NAME -> (hears a name) -> CONFIRM_NAME
+                                        yes -> ENROLL -> CHATTING
+                                        no  -> ASK_NAME (retry, max 2)
+
+Every waiting state times out; a robot silently waiting forever for a reply has
+stopped working without saying so. Known faces have a 5-minute greet cooldown,
+and a second face appearing mid-conversation is ignored rather than allowed to
+interrupt the person already being spoken to.
+
+### Backend is a config line, not a rewrite
+
+    BUDDY_TTS           piper (default) | openai | gemini
+    BUDDY_STT           sherpa (default)
+    BUDDY_LLM_BASE_URL  default http://localhost:11434/v1
+    BUDDY_LLM_MODEL     default qwen2.5:1.5b-instruct
+    BUDDY_LLM_API_KEY   ignored by local servers, required by cloud
+
+The OpenAI chat API is a de facto standard: Ollama, llama.cpp, vLLM and LM
+Studio all speak it, as do OpenAI and Google's compatibility endpoint. So
+local / desktop / cloud differ only in `base_url` and key. **TTS and STT are NOT
+as uniform** - Gemini's TTS is a different API shape entirely - which is exactly
+why `speak()` and `transcribe()` are wrapped rather than called directly.
+
+Sentence-by-sentence TTS streaming measured **140 ms to first sentence audio**.
+This is the trick the ESP32 desk robots use, and it is free: a long reply starts
+no later than a short one, so perceived latency stops depending on reply length.
+
+### Running it: one interpreter, two package sources
+
+The node needs `rclpy` (ROS) AND `piper`/`sherpa` (venv). Verified working:
+
+    source /opt/ros/humble/setup.bash && source install/setup.bash
+    ~/buddy_speech_venv/bin/python <script>
+
+The venv interpreter picks up rclpy from ROS's PYTHONPATH and the speech
+packages from the venv. Both are Python 3.10, so they coexist. Do NOT try to
+install rclpy into the venv.
+
+### Known weakness
+
+The 20M STT model mishears on synthetic speech: "Buddy" came back as "BODY" and
+"Hello there" as "O THERE". Human speech into a real microphone may do better,
+but a robot called Buddy being misheard as "body" is worth watching. If it is a
+problem, a larger zipformer or Moonshine is the upgrade. **Untested with a real
+microphone** - there still isn't one attached.
+
+### Not yet built
+
+The ROS node that wires this to `/buddy_say`, the face recogniser and the drive
+modes. Everything above it is pure logic and tested; the node is plumbing.
+
 ## Working with the owner
 
 Mechanical engineering student (CU Boulder, controls/robotics) targeting Bay Area
