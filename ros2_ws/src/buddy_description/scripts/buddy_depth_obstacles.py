@@ -43,6 +43,13 @@ from sensor_msgs.msg import CameraInfo, Image, LaserScan
 from std_msgs.msg import String
 from tf2_ros import Buffer, TransformListener
 
+try:
+    from foxglove_msgs.msg import (Color, ImageAnnotations, Point2,
+                                   PointsAnnotation, TextAnnotation)
+    HAVE_FOXGLOVE = True
+except ImportError:          # annotations are a debugging aid, not a dependency
+    HAVE_FOXGLOVE = False
+
 
 class DepthObstacles(Node):
 
@@ -90,6 +97,15 @@ class DepthObstacles(Node):
         self.declare_parameter('persist_frames', 3)
         self.declare_parameter('persist_min', 2)
         self.declare_parameter('rate', 5.0)
+        # Live overlay for Foxglove's Image panel: the pixels this node counted
+        # as obstacles, drawn on the camera view and coloured by distance, so
+        # you can see WHAT it is stopping for rather than inferring it from a
+        # separate 3D panel.
+        self.declare_parameter('publish_annotations', True)
+        self.declare_parameter('annotation_topic', '/oak/obstacle_annotations')
+        # Cap the overlay size; at 5 Hz a few hundred points is plenty and
+        # keeps the websocket cheap over wifi.
+        self.declare_parameter('max_annotation_points', 500)
 
         g = lambda n: self.get_parameter(n).value
         self.base_frame = g('base_frame')
@@ -104,6 +120,12 @@ class DepthObstacles(Node):
         self.persist_frames = int(g('persist_frames'))
         self.persist_min = int(g('persist_min'))
         self._history = []
+        self.annotate = bool(g('publish_annotations')) and HAVE_FOXGLOVE
+        self.max_ann = int(g('max_annotation_points'))
+        if g('publish_annotations') and not HAVE_FOXGLOVE:
+            self.get_logger().warn(
+                'publish_annotations requested but foxglove_msgs is not '
+                'available; continuing without the overlay')
 
         self.info = None
         self.depth = None
@@ -117,6 +139,8 @@ class DepthObstacles(Node):
         self.create_subscription(Image, g('depth_topic'),
                                  self._on_depth, qos_profile_sensor_data)
         self.scan_pub = self.create_publisher(LaserScan, g('scan_topic'), 10)
+        self.ann_pub = (self.create_publisher(
+            ImageAnnotations, g('annotation_topic'), 10) if self.annotate else None)
         self.status_pub = self.create_publisher(String, '/depth_obstacle_status', 10)
 
         self.create_timer(1.0/max(g('rate'), 1.0), self._tick)
@@ -209,13 +233,18 @@ class DepthObstacles(Node):
         pts = R @ np.vstack([xc, yc, zc]) + T
         bx, by, bz = pts[0], pts[1], pts[2]
 
+        px_all, py_all = xs[ok], ys[ok]
+
         band = (bz >= self.min_h) & (bz <= self.max_h)
         n_band = int(band.sum())
         if n_band == 0:
             self._publish_empty(msg)
             self._status('clear', n_valid, 0)
+            if self.annotate:
+                self._publish_annotations(msg, None, None, None)
             return
         bx, by = bx[band], by[band]
+        px_band, py_band = px_all[band], py_all[band]
 
         rng = np.hypot(bx, by)
         brg = np.arctan2(by, bx)
@@ -239,10 +268,16 @@ class DepthObstacles(Node):
         if len(self._history) > self.persist_frames:
             self._history.pop(0)
         stack = np.vstack(self._history)               # frames x bins
-        seen = np.isfinite(stack).sum(axis=0)
-        with np.errstate(invalid='ignore'):
-            med = np.nanmedian(np.where(np.isfinite(stack), stack, np.nan), axis=0)
-        ranges = np.where(seen >= self.persist_min, med, np.inf).astype(np.float32)
+        finite_mask = np.isfinite(stack)
+        seen = finite_mask.sum(axis=0)
+        ranges = np.full(self.bins, np.inf, dtype=np.float32)
+        # Median only over bins that actually have samples. Calling nanmedian
+        # across all bins warns "All-NaN slice encountered" on every empty one,
+        # which at 5 Hz floods the log.
+        enough = np.where(seen >= self.persist_min)[0]
+        for b in enough:
+            col = stack[:, b]
+            ranges[b] = np.median(col[np.isfinite(col)])
 
         out = LaserScan()
         out.header.stamp = msg.header.stamp
@@ -255,11 +290,72 @@ class DepthObstacles(Node):
         out.ranges = [float(r) if math.isfinite(r) else 0.0 for r in ranges]
         self.scan_pub.publish(out)
 
+        if self.annotate:
+            self._publish_annotations(msg, px_band, py_band,
+                                      np.hypot(bx, by))
+
         finite = ranges[np.isfinite(ranges)]
         nearest = float(finite.min()) if finite.size else float('inf')
         self._status('ok', n_valid, n_band, nearest, int(np.isfinite(ranges).sum()),
                      float(bz[band].min()) if n_band else None,
                      float(bz[band].max()) if n_band else None)
+
+    def _publish_annotations(self, msg, px, py, rng):
+        """
+        Draw the obstacle pixels onto the camera image for Foxglove.
+
+        Coloured near (red) to far (green) over the sensor's working range, with
+        a box and a label on the nearest cluster. Pixel coordinates come from
+        the depth image, which is registered to the colour stream, so they line
+        up with /oak/rgb/image_rect.
+        """
+        ann = ImageAnnotations()
+        stamp = msg.header.stamp
+        if px is not None and px.size:
+            n = px.size
+            stride = max(1, n // self.max_ann)
+            sx, sy, sr = px[::stride], py[::stride], rng[::stride]
+
+            pa = PointsAnnotation()
+            pa.timestamp = stamp
+            pa.type = PointsAnnotation.POINTS
+            pa.thickness = 3.0
+            span = max(self.max_d - self.min_d, 1e-3)
+            for x, y, r in zip(sx, sy, sr):
+                pa.points.append(Point2(x=float(x), y=float(y)))
+                f = min(max((r - self.min_d)/span, 0.0), 1.0)
+                pa.outline_colors.append(
+                    Color(r=float(1.0-f), g=float(f), b=0.2, a=0.9))
+            pa.outline_color = Color(r=1.0, g=0.0, b=0.0, a=0.9)
+            pa.fill_color = Color(r=0.0, g=0.0, b=0.0, a=0.0)
+            ann.points.append(pa)
+
+            # Box the nearest cluster: everything within 0.15 m of the closest
+            # return, which is what the guard will actually stop for.
+            near = rng.min()
+            sel = rng <= near + 0.15
+            if sel.sum() >= self.min_pts:
+                x0, x1 = float(px[sel].min()), float(px[sel].max())
+                y0, y1 = float(py[sel].min()), float(py[sel].max())
+                box = PointsAnnotation()
+                box.timestamp = stamp
+                box.type = PointsAnnotation.LINE_LOOP
+                box.thickness = 2.0
+                for x, y in ((x0, y0), (x1, y0), (x1, y1), (x0, y1)):
+                    box.points.append(Point2(x=x, y=y))
+                box.outline_color = Color(r=1.0, g=0.25, b=0.0, a=1.0)
+                box.fill_color = Color(r=0.0, g=0.0, b=0.0, a=0.0)
+                ann.points.append(box)
+
+                t = TextAnnotation()
+                t.timestamp = stamp
+                t.position = Point2(x=x0, y=max(y0-8.0, 12.0))
+                t.text = f'{near:.2f} m'
+                t.font_size = 20.0
+                t.text_color = Color(r=1.0, g=1.0, b=1.0, a=1.0)
+                t.background_color = Color(r=0.8, g=0.2, b=0.0, a=0.7)
+                ann.texts.append(t)
+        self.ann_pub.publish(ann)
 
     def _publish_empty(self, msg):
         out = LaserScan()

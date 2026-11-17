@@ -44,11 +44,16 @@ class Wanderer(Node):
     def __init__(self):
         super().__init__('buddy_wanderer')
 
-        # Must stay above the drivetrain's break-away (0.18 m/s, PWM 149).
-        self.declare_parameter('cruise_speed', 0.20)
-        # 1.2 rad/s puts each wheel at 0.198 m/s, just above break-away.
-        self.declare_parameter('turn_speed', 1.2)
-        self.declare_parameter('back_speed', 0.20)
+        # Measured 2026-11-12/13, superseding the old 0.18 m/s figure: the
+        # firmware's v*833 scale is wrong (true constant ~581), so MIN_PWM 150
+        # is a real floor of 0.26 m/s. Commanding 0.20 lands at PWM 166 and
+        # achieves only 43% of it - the wheels stall intermittently and the
+        # robot judders instead of driving. 0.28 is PWM 233, comfortably clear.
+        self.declare_parameter('cruise_speed', 0.28)
+        # The slowest non-stalling in-place turn is 2*0.26/0.3302 = 1.57 rad/s.
+        # The old 1.2 was BELOW that, so every turn was a stall.
+        self.declare_parameter('turn_speed', 1.6)
+        self.declare_parameter('back_speed', 0.28)
         # Turn earlier than the guard stops (0.35 m), so normal wandering never
         # trips the safety layer - but not so early that an ordinary room never
         # looks clear. Measured live 2026-11-11: front clearance in this space
@@ -65,7 +70,15 @@ class Wanderer(Node):
         # Bursting the turn drops the AVERAGE rate without going under
         # break-away, so scans land in the gaps between bursts.
         # Set turn_pulse_period to 0.0 for a continuous turn.
-        self.declare_parameter('turn_pulse_period', 0.45)
+        # Pulsing is now DISABLED by default (0.0 = continuous turn).
+        #
+        # It was introduced to lower the average turn rate for the 3.7 Hz
+        # lidar, but measurement on 2026-11-13 showed it makes things worse:
+        # every burst is a fresh break-away from rest, and break-away is where
+        # the tyres slip. Continuous turns measured an odometry yaw gain of
+        # 1.002 against the lidar; pulsed turns 1.038. Pulsed turns also
+        # overshoot, because the base coasts after each command stops.
+        self.declare_parameter('turn_pulse_period', 0.0)
         self.declare_parameter('turn_pulse_duty', 0.45)
         self.declare_parameter('min_turn_time', 0.6)
         self.declare_parameter('max_turn_time', 6.0)

@@ -754,6 +754,148 @@ manual debugging in domain 91**, which is the suite's own default domain. The
 runner's comments warn about exactly this. Before believing a test failure,
 check `pgrep` for stray `buddy_*` nodes.
 
+## Voice stack — local STT, TTS and LLM on the Jetson, 2026-11-16
+
+**Everything except a large LLM runs on the robot with no desktop and no
+network.** Phase 3 of the project ordering, started early at the owner's request.
+
+### Where things live
+
+```
+~/buddy_speech_venv          speech stack (virtualenv - see below)
+~/buddy_speech_models        STT + TTS models, ~550 MB
+~/.local                     torch + transformers (Jetson CUDA build)
+scripts/voice/bench_voice_stack.py   latency benchmark, no audio hardware needed
+```
+
+The speech stack is in a **virtualenv** because installing it globally twice
+broke PlatformIO: `huggingface-hub` requires `click>=8.4.2` and PlatformIO
+requires `click<8.4`, which cannot both hold in one environment. The venv was
+made with `virtualenv`, NOT `python3 -m venv`, because `ensurepip` is missing
+(the same `python3.10-venv` gap documented above) - `virtualenv` bundles its own
+pip and needs no sudo.
+
+**torch deliberately stays in `~/.local`.** It is NVIDIA's JetPack CUDA build;
+a fresh venv would pull a CPU-only aarch64 torch from PyPI and lose the GPU.
+The speech stack needs no torch at all, so the split is clean.
+
+    ~/buddy_speech_venv/bin/python scripts/voice/bench_voice_stack.py --part speech
+    python3 scripts/voice/bench_voice_stack.py --part llm --model <id>
+
+### Measured on this Jetson
+
+| stage | result |
+| ----- | ------ |
+| STT, sherpa-onnx streaming zipformer 20M | **7.9-12.4x realtime** |
+| TTS, Piper lessac-medium | **86-300 ms to first audio**, 3.5-4x RT |
+| LLM, Qwen2.5-0.5B-Instruct fp16 on GPU | **12.6 tok/s**, 0.99 GB, loads in 2.0 s |
+| end-to-end, no LLM | **~700 ms to first sound** |
+
+Under ~800 ms reads as natural. The number that matters is TIME TO FIRST AUDIO,
+not throughput: with sentence-by-sentence TTS the robot starts speaking as soon
+as the first sentence exists, so a long reply starts no later than a short one.
+This is the trick the ESP32 desk robots use, and it is free.
+
+The old `scripts/voice/voice_assistant_v2.py` had `SILENCE_TIMEOUT = 1.5`, which
+is 1.5 s of dead air before anything else begins. That single constant dominated
+everything; 400 ms is the right ballpark.
+
+### What did NOT work, so nobody repeats it
+
+**sherpa-onnx 2.x cannot phonemize English.** It dropped the espeak frontend, so
+Piper voices AND Kokoro both fail with "no lexicon, no frontend available" even
+though `data_dir` is set correctly and the model loads. Use the separate
+`piper-tts` runtime, which bundles its own phonemizer.
+
+**`vits-ljs` runs at 0.8x realtime** - slower than speech. Unusable.
+
+**Kokoro v1.0 runs at 0.5-0.7x realtime on CPU** and OOMs on the GPU. It is the
+better-sounding model and the right eventual target, but it needs GPU headroom.
+
+**onnxruntime CPU and GPU packages share the module name.** Installing
+`onnxruntime-gpu` alongside `onnxruntime` leaves the CPU one shadowing it;
+uninstalling the CPU one then breaks the GPU one because they share files. Fix:
+uninstall both, then `pip install --force-reinstall --no-deps onnxruntime-gpu`
+from `https://pypi.jetson-ai-lab.io/jp6/cu126`. Result: providers become
+`['TensorrtExecutionProvider', 'CUDAExecutionProvider', 'CPUExecutionProvider']`.
+
+**The system pandas is built against numpy 1.x** while `~/.local` has numpy 2.x,
+which breaks every sklearn import - and transformers 5.x imports sklearn
+unconditionally. Fix: `pip install --user "pandas>=2.2"` to shadow it.
+
+### Jetson-specific LLM traps
+
+**`NVML_SUCCESS == r INTERNAL ASSERT FAILED` is not the real error.** NVML is not
+fully supported on Tegra and the assert MASKS whatever actually went wrong -
+twice it was a plain CUDA OOM. Set `PYTORCH_NO_CUDA_MEMORY_CACHING=1` to see the
+true cause, then fix that.
+
+**Load straight to the GPU.** `from_pretrained(...).to('cuda')` materialises on
+CPU first and then copies, doubling peak memory - fatal on shared Jetson memory.
+`device_map={'': 0}` with `low_cpu_mem_usage=True` turned an OOM into a 2.0 s load.
+
+**Disable `caching_allocator_warmup`.** transformers pre-allocates the entire
+model as ONE contiguous block before loading. On shared memory that single
+allocation fails even when the total is free:
+
+    import transformers.modeling_utils as mu
+    mu.caching_allocator_warmup = lambda *a, **k: None
+
+**transformers 5.x `apply_chat_template` returns a dict**, not a tensor. Use
+`return_dict=True` and `model.generate(**enc, ...)`.
+
+### Memory is the binding constraint, and it is mostly the IDE
+
+7.6 GB total, shared between CPU and GPU. With a desktop session attached:
+
+| | |
+| --- | --- |
+| `cloudcode_cli` | 771 MB |
+| VS Code server (7 processes) | ~854 MB |
+| Claude Code VS Code extension | 313 MB |
+| `cpptools` C++ language server | 227 MB |
+| **dev tooling total** | **~2.3 GB** |
+
+ROS, the lidar and the camera were using **zero** during these measurements.
+
+Qwen2.5-0.5B fits easily and works. **Qwen2.5-1.5B fp16 (~3.1 GB) does NOT fit
+with the IDE attached** - it OOMs with 3.99 GB nominally free, because it also
+needs activations, CUDA context and loader overhead. Headless there should be
+~6.5-7 GB and it ought to fit. **Not yet verified** - benchmark it headless
+before believing it.
+
+### Audio hardware
+
+**There is still no usable microphone or speaker.** Capture shows only
+`tegra-dlink` XBAR-ADMAIF devices, which are the SoC's internal audio routing
+fabric with no codec attached; playback is HDMI only.
+
+**The owner's Sonos Roam will not work as a microphone.** Sonos exposes
+Bluetooth as audio streaming only; the mic array serves Sonos's own voice
+control and is not offered to a paired device. Plan on Roam as SPEAKER and a USB
+webcam as MIC.
+
+**Gate the mic while speaking.** A webcam mic plus a Bluetooth speaker has no
+acoustic echo cancellation anywhere, so the robot will hear itself and reply to
+itself. Muting input during TTS and for ~150 ms after removes the problem
+entirely; the cost is losing interruptibility, which does not matter for
+"what is your name?". Bluetooth also adds 100-200 ms.
+
+If buying later, the thing worth paying for is hardware AEC and an
+omnidirectional array: an Anker PowerConf S3 (own battery, does not draw from
+the robot pack) or a Jabra Speak 410 (lighter). A ReSpeaker USB Mic Array gives
+direction of arrival so the robot can turn to face a speaker, but needs a
+separate speaker and fiddly AEC reference routing.
+
+### Still to do
+
+1. Wire Piper + sherpa-onnx into a ROS node on the existing `/buddy_say` topic.
+2. Intent matching for commands like "follow me" - deterministic, no LLM, and it
+   cannot hallucinate a name during face enrollment.
+3. The new-face dialogue against the existing `face_db` and
+   `buddy_face_recognizer.py`, which already publishes `/buddy_say`.
+4. Verify a 1.5B model headless; try Kokoro on the GPU with the IDE closed.
+
 ## Working with the owner
 
 Mechanical engineering student (CU Boulder, controls/robotics) targeting Bay Area
